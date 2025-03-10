@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 import csv
 import io
+import time
 
 class BuildingCodeAnalyzer:
     def __init__(self):
@@ -199,81 +200,119 @@ def display_results(results: List[Dict]):
                 st.dataframe(specs_df, hide_index=True)
 
 def main():
-    st.set_page_config(
-        page_title="Building Code Analyzer",
-        page_icon="🏗️",
-        layout="wide"
-    )
+    try:
+        st.set_page_config(
+            page_title="Building Code Analyzer",
+            page_icon="🏗️",
+            layout="wide"
+        )
 
-    st.title("Building Code Analyzer 🏗️")
+        st.title("Building Code Analyzer 🏗️")
 
-    # Initialize session state
-    if 'analyzer' not in st.session_state:
-        st.session_state.analyzer = BuildingCodeAnalyzer()
+        # Initialize session state safely
+        if 'analyzer' not in st.session_state:
+            st.session_state.analyzer = BuildingCodeAnalyzer()
+            st.session_state.uploaded_file = None
+            st.session_state.search_results = None
 
-    # Sidebar
-    with st.sidebar:
-        st.header("Statistics")
-        st.metric("Components", len(st.session_state.analyzer.components))
-        st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
-        st.metric("Quantities", len(st.session_state.analyzer.quantities))
+        # Sidebar
+        with st.sidebar:
+            st.header("Statistics")
+            try:
+                st.metric("Components", len(st.session_state.analyzer.components))
+                st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
+                st.metric("Quantities", len(st.session_state.analyzer.quantities))
+            except Exception as e:
+                st.error("Error displaying statistics")
+                st.session_state.analyzer = BuildingCodeAnalyzer()  # Reset analyzer
 
-        st.markdown("---")
-        st.header("Upload Data")
-        uploaded_file = st.file_uploader("Choose a JSON file", type="json")
-        
-        if uploaded_file:
-            file_contents = uploaded_file.read().decode("utf-8")
-            if st.session_state.analyzer.load_file(file_contents):
-                st.success("File loaded successfully!")
-                st.rerun()
-
-    # Main content
-    if len(st.session_state.analyzer.components) > 0:
-        # Search interface
-        st.subheader("Search Components")
-        col1, col2 = st.columns([3, 1])
-        
-        with col1:
-            search_term = st.text_input(
-                "Enter search term",
-                placeholder="e.g., foundation.material",
-                help="You can use dot notation for nested components"
-            )
-        
-        with col2:
-            search_button = st.button("Search", type="primary", use_container_width=True)
-        
-        if search_button and search_term:
-            results = st.session_state.analyzer.search(search_term)
-            display_results(results)
+            st.markdown("---")
+            st.header("Upload Data")
+            uploaded_file = st.file_uploader("Choose a JSON file", type="json", key="json_uploader")
             
-        # Component type filter
-        st.subheader("Filter by Type")
-        component_types = ["All"] + list(set(comp["type"] for comp in st.session_state.analyzer.components.values()))
-        selected_type = st.selectbox("Select component type", component_types)
-        
-        if selected_type != "All":
-            filtered_components = {
-                k: v for k, v in st.session_state.analyzer.components.items()
-                if v["type"] == selected_type
-            }
-            
-            if filtered_components:
-                st.write(f"Found {len(filtered_components)} {selected_type} components:")
-                for key, comp in filtered_components.items():
-                    with st.expander(key):
-                        st.write(f"**Type:** {comp['type']}")
-                        if key in st.session_state.analyzer.quantities:
-                            q = st.session_state.analyzer.quantities[key]
-                            st.metric("Quantity", f"{q['value']} {q['unit']}")
-                        if key in st.session_state.analyzer.guidelines:
-                            st.write("**Guidelines:**")
-                            st.write(st.session_state.analyzer.guidelines[key]["description"])
-            else:
-                st.warning(f"No components found of type: {selected_type}")
-    else:
-        st.info("👈 Please upload a JSON file to get started!")
+            if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
+                try:
+                    with st.spinner('Loading file...'):
+                        st.session_state.uploaded_file = uploaded_file
+                        file_contents = uploaded_file.read().decode("utf-8")
+                        st.info("File read successfully, processing data...")
+                        if st.session_state.analyzer.load_file(file_contents):
+                            st.success("File loaded successfully!")
+                            time.sleep(1)  # Give UI time to update
+                            st.rerun()
+                        else:
+                            st.error("Failed to process the file. Please check the file format.")
+                except json.JSONDecodeError as je:
+                    st.error("Invalid JSON file. Please check the file format.")
+                    st.session_state.analyzer = BuildingCodeAnalyzer()
+                except Exception as e:
+                    st.error(f"Error loading file: {str(e)}")
+                    st.session_state.analyzer = BuildingCodeAnalyzer()  # Reset analyzer
+
+        # Main content
+        if len(st.session_state.analyzer.components) > 0:
+            try:
+                # Search interface
+                st.subheader("Search Components")
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    search_term = st.text_input(
+                        "Enter search term",
+                        placeholder="e.g., foundation.material",
+                        help="You can use dot notation for nested components"
+                    )
+                
+                with col2:
+                    search_button = st.button("Search", type="primary", use_container_width=True)
+                
+                if search_button and search_term:
+                    results = st.session_state.analyzer.search(search_term)
+                    st.session_state.search_results = results
+                    display_results(results)
+                
+                # Component type filter
+                st.subheader("Filter by Type")
+                try:
+                    # Get unique component types safely
+                    component_types = {"General", "Structural", "Utilities"}  # Default types
+                    for comp in st.session_state.analyzer.components.values():
+                        if isinstance(comp, dict) and "type" in comp:
+                            component_types.add(comp["type"])
+                    
+                    filter_options = ["All"] + sorted(list(component_types))
+                    selected_type = st.selectbox("Select component type", filter_options)
+                    
+                    if selected_type != "All":
+                        filtered_components = {
+                            k: v for k, v in st.session_state.analyzer.components.items()
+                            if isinstance(v, dict) and "type" in v and v["type"] == selected_type
+                        }
+                        
+                        if filtered_components:
+                            st.write(f"Found {len(filtered_components)} {selected_type} components:")
+                            for key, comp in filtered_components.items():
+                                with st.expander(key):
+                                    st.write(f"**Type:** {comp['type']}")
+                                    if key in st.session_state.analyzer.quantities:
+                                        q = st.session_state.analyzer.quantities[key]
+                                        st.metric("Quantity", f"{q['value']} {q['unit']}")
+                                    if key in st.session_state.analyzer.guidelines:
+                                        st.write("**Guidelines:**")
+                                        st.write(st.session_state.analyzer.guidelines[key]["description"])
+                        else:
+                            st.warning(f"No components found of type: {selected_type}")
+                except Exception as e:
+                    st.error("Error in component filtering")
+                    st.info("Please try searching for components instead.")
+            except Exception as e:
+                st.error("Error in main content")
+                st.info("Please try refreshing the page")
+        else:
+            st.info("👈 Please upload a JSON file to get started!")
+    except Exception as e:
+        st.error("Application error occurred. Please refresh the page.")
+        st.session_state.clear()  # Clear session state on critical error
 
 if __name__ == "__main__":
     main() 
