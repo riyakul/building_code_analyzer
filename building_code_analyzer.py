@@ -101,7 +101,7 @@ class BuildingCodeAnalyzer:
             return "General"
 
     def search(self, term: str) -> List[Dict]:
-        """Search for components matching the given term."""
+        """Search for components with quantitative data or placement information."""
         if not self.components:
             st.warning("No data loaded. Please upload a file first.")
             return []
@@ -109,11 +109,48 @@ class BuildingCodeAnalyzer:
         results = []
         term_parts = term.lower().split('.')
         
+        # Location/placement related keywords
+        placement_keywords = [
+            "location", "placement", "position", "installed", "mounted", "located",
+            "between", "above", "below", "near", "adjacent", "inside", "outside",
+            "spacing", "distance", "interval", "centers", "layout"
+        ]
+        
         for comp_key, comp_data in self.components.items():
             comp_key_lower = comp_key.lower()
             should_include = False
+            data_type = set()  # Track what kind of data this component has
             
-            # Check various matching conditions
+            # Check if component has any quantitative data
+            has_quantities = comp_key in self.quantities
+            if has_quantities:
+                data_type.add("quantitative")
+            
+            # Check for numerical specifications and placement info in guidelines
+            has_numerical_specs = False
+            has_placement_info = False
+            numerical_specs = []
+            placement_info = None
+            
+            if comp_key in self.guidelines:
+                guideline_text = str(self.guidelines[comp_key]["description"]).lower()
+                
+                # Extract numerical specifications
+                numerical_specs = re.findall(
+                    r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)", 
+                    str(self.guidelines[comp_key]["description"])
+                )
+                has_numerical_specs = len(numerical_specs) > 0
+                if has_numerical_specs:
+                    data_type.add("quantitative")
+                
+                # Check for placement information
+                if any(keyword in guideline_text for keyword in placement_keywords):
+                    has_placement_info = True
+                    placement_info = self.guidelines[comp_key]["description"]
+                    data_type.add("placement")
+            
+            # Determine if component should be included
             if term.lower() == comp_key_lower:
                 should_include = True
             elif all(part in comp_key_lower for part in term_parts):
@@ -126,29 +163,28 @@ class BuildingCodeAnalyzer:
             if should_include:
                 result = {
                     "component": comp_key,
-                    "type": self.detect_component_type(comp_key)
+                    "type": self.detect_component_type(comp_key),
+                    "data_types": list(data_type)
                 }
                 
-                if comp_key in self.quantities:
+                # Include quantity data if available
+                if has_quantities:
                     q = self.quantities[comp_key]
                     result["quantity"] = {
                         "value": q["value"],
                         "unit": q["unit"]
                     }
                 
-                if comp_key in self.guidelines:
-                    result["guidelines"] = self.guidelines[comp_key]["description"]
+                # Include numerical specifications from guidelines
+                if has_numerical_specs:
+                    result["specifications"] = [
+                        {"value": float(value), "unit": unit, "description": self.guidelines[comp_key]["description"]}
+                        for value, unit in numerical_specs
+                    ]
                 
-                    # Extract numerical specifications from guidelines
-                    numerical_specs = re.findall(
-                        r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³)", 
-                        str(self.guidelines[comp_key])
-                    )
-                    if numerical_specs:
-                        result["specifications"] = [
-                            {"value": float(value), "unit": unit}
-                            for value, unit in numerical_specs
-                        ]
+                # Include placement information if available
+                if has_placement_info:
+                    result["placement"] = placement_info
                 
                 results.append(result)
         
@@ -186,48 +222,129 @@ def export_results(results: List[Dict], format: str) -> Optional[tuple]:
     return None
 
 def display_results(results: List[Dict]):
-    """Display search results in Streamlit."""
+    """Display search results with both quantitative and placement data."""
     if not results:
-        st.warning("No results found.")
+        st.warning("No matching components found.")
         return
 
-    st.write(f"Found {len(results)} results:")
+    st.write(f"Found {len(results)} components:")
     
-    # Add export options
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Export results:")
-    with col2:
-        export_format = st.selectbox("Format", ["CSV", "JSON"], key="export_format")
-        
-        if st.button("Export", key="export_button"):
-            export_data = export_results(results, export_format)
-            if export_data:
-                content, mime_type = export_data
-                filename = f"building_codes_results.{export_format.lower()}"
-                st.download_button(
-                    label="Download",
-                    data=content,
-                    file_name=filename,
-                    mime=mime_type
-                )
+    # Organize results by data type
+    quantitative_results = []
+    placement_results = []
     
     for result in results:
+        # Handle quantitative data
+        if "quantitative" in result["data_types"]:
+            component_data = {
+                "Component": result["component"],
+                "Type": result["type"]
+            }
+            
+            if "quantity" in result:
+                quantitative_results.append({
+                    **component_data,
+                    "Value": result["quantity"]["value"],
+                    "Unit": result["quantity"]["unit"],
+                    "Description": "Direct measurement"
+                })
+            
+            if "specifications" in result:
+                for spec in result["specifications"]:
+                    quantitative_results.append({
+                        **component_data,
+                        "Value": spec["value"],
+                        "Unit": spec["unit"],
+                        "Description": spec["description"]
+                    })
+        
+        # Handle placement data
+        if "placement" in result["data_types"]:
+            placement_results.append({
+                "Component": result["component"],
+                "Type": result["type"],
+                "Placement Guidelines": result["placement"]
+            })
+    
+    # Display quantitative data
+    if quantitative_results:
+        st.subheader("Quantitative Specifications")
+        df_quant = pd.DataFrame(quantitative_results)
+        st.dataframe(df_quant, hide_index=True)
+    
+    # Display placement data
+    if placement_results:
+        st.subheader("Placement Guidelines")
+        df_place = pd.DataFrame(placement_results)
+        st.dataframe(df_place, hide_index=True)
+    
+    # Add export options
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1:
+        st.write("Export data:")
+    with col2:
+        export_format = st.selectbox("Format", ["CSV", "JSON"], key="export_format")
+    with col3:
+        if st.button("Export", key="export_button"):
+            export_data = {
+                "quantitative_data": quantitative_results if quantitative_results else [],
+                "placement_data": placement_results if placement_results else []
+            }
+            
+            if export_format == "CSV":
+                # Create a combined CSV with sections
+                output = io.StringIO()
+                writer = csv.writer(output)
+                
+                if quantitative_results:
+                    writer.writerow(["QUANTITATIVE SPECIFICATIONS"])
+                    writer.writerow(df_quant.columns.tolist())
+                    writer.writerows(df_quant.values.tolist())
+                    writer.writerow([])  # Empty row as separator
+                
+                if placement_results:
+                    writer.writerow(["PLACEMENT GUIDELINES"])
+                    writer.writerow(df_place.columns.tolist())
+                    writer.writerows(df_place.values.tolist())
+                
+                st.download_button(
+                    label="Download CSV",
+                    data=output.getvalue(),
+                    file_name="building_codes_analysis.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.download_button(
+                    label="Download JSON",
+                    data=json.dumps(export_data, indent=2),
+                    file_name="building_codes_analysis.json",
+                    mime="application/json"
+                )
+    
+    # Show detailed view
+    st.subheader("Detailed View")
+    for result in results:
         with st.expander(f"{result['component']} ({result['type']})"):
+            # Show data types
+            st.write("**Data Types:**", ", ".join(result["data_types"]))
+            
+            # Display quantities
             if "quantity" in result:
                 st.metric(
                     "Quantity",
                     f"{result['quantity']['value']} {result['quantity']['unit']}"
                 )
             
-            if "guidelines" in result:
-                st.write("**Guidelines:**")
-                st.write(result["guidelines"])
-            
+            # Display specifications in a table
             if "specifications" in result:
-                st.write("**Specifications:**")
+                st.write("**Numerical Specifications:**")
                 specs_df = pd.DataFrame(result["specifications"])
-                st.dataframe(specs_df, hide_index=True)
+                st.dataframe(specs_df[["value", "unit", "description"]], hide_index=True)
+            
+            # Display placement information
+            if "placement" in result:
+                st.write("**Placement Guidelines:**")
+                st.info(result["placement"])
 
 def main():
     try:
