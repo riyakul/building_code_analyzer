@@ -32,43 +32,73 @@ class BuildingCodeAnalyzer:
             self.guidelines.clear()
 
             def recurse(d, parent=""):
+                if not isinstance(d, (dict, list)):
+                    return
+                
                 if isinstance(d, dict):
                     for k, v in d.items():
-                        key = f"{parent}.{k}" if parent else k
-                        self.components[key] = {
-                            "name": k,
-                            "type": self.detect_component_type(k)
-                        }
-                        if isinstance(v, (int, float)):
-                            self.quantities[key] = {
-                                "value": v,
-                                "unit": "units",
-                                "component": key
+                        try:
+                            key = f"{parent}.{k}" if parent else k
+                            # Store component info
+                            self.components[key] = {
+                                "name": k,
+                                "type": self.detect_component_type(k)
                             }
-                        elif isinstance(v, str):
-                            self.guidelines[key] = {
-                                "description": v,
-                                "component": key
-                            }
-                        recurse(v, key)
+                            
+                            # Process values
+                            if isinstance(v, (int, float)):
+                                self.quantities[key] = {
+                                    "value": v,
+                                    "unit": "units",
+                                    "component": key
+                                }
+                            elif isinstance(v, str):
+                                self.guidelines[key] = {
+                                    "description": v,
+                                    "component": key
+                                }
+                            
+                            # Recurse into nested structures
+                            if isinstance(v, (dict, list)):
+                                recurse(v, key)
+                        except Exception as e:
+                            st.warning(f"Error processing key '{k}': {str(e)}")
+                            continue
+                            
                 elif isinstance(d, list):
                     for i, item in enumerate(d):
-                        recurse(item, f"{parent}[{i}]")
+                        try:
+                            recurse(item, f"{parent}[{i}]")
+                        except Exception as e:
+                            st.warning(f"Error processing list item {i}: {str(e)}")
+                            continue
 
+            # Process the root data
             recurse(data)
+            
+            # Verify we have processed some data
+            if not self.components:
+                st.error("No components were processed from the data")
+                return False
+                
             return True
+            
         except Exception as e:
-            st.error(f"Error processing data: {e}")
+            st.error(f"Error processing data: {str(e)}")
             return False
 
     def detect_component_type(self, key: str) -> str:
         """Determine the type of a component based on its key."""
-        key_lower = key.lower()
-        if any(x in key_lower for x in ["wall", "beam", "column", "foundation"]):
-            return "Structural"
-        if any(x in key_lower for x in ["electrical", "plumbing", "hvac"]):
-            return "Utilities"
-        return "General"
+        try:
+            key_lower = key.lower()
+            if any(x in key_lower for x in ["wall", "beam", "column", "foundation", "roof", "floor", "ceiling"]):
+                return "Structural"
+            if any(x in key_lower for x in ["electrical", "plumbing", "hvac", "mechanical", "utility"]):
+                return "Utilities"
+            return "General"
+        except Exception as e:
+            st.warning(f"Error detecting component type for '{key}': {str(e)}")
+            return "General"
 
     def search(self, term: str) -> List[Dict]:
         """Search for components matching the given term."""
