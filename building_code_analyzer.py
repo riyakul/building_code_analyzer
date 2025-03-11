@@ -790,7 +790,7 @@ class BuildingCodeAnalyzer:
         return results
 
     def display_results(self, results: List[Dict]):
-        """Display search results focusing on quantitative details."""
+        """Display search results with comprehensive information and context."""
         try:
             if not isinstance(results, list):
                 st.warning("Invalid results format")
@@ -832,69 +832,133 @@ class BuildingCodeAnalyzer:
                                 
                             component_name = str(result.get("component", "Unknown Component"))
                             with st.expander(f"Component: {component_name}"):
-                                # Display quantitative information first
-                                details = result.get("details", {})
-                                if not isinstance(details, dict):
-                                    details = {}
+                                # Display source information
+                                source = result.get("dataset", "Local Database")
+                                st.write(f"🔍 **Source:** {source}")
                                 
-                                # Display dimensions with numerical values
-                                dimensions = details.get("dimensions", [])
-                                if isinstance(dimensions, list) and dimensions:
-                                    st.write("📏 **Dimensions:**")
-                                    for dim in dimensions:
-                                        try:
-                                            if isinstance(dim, dict):
-                                                value = dim.get("value", "N/A")
-                                                unit = dim.get("unit", "")
-                                                st.write(f"- {value} {unit}")
-                                        except Exception as e:
-                                            st.warning(f"Error displaying dimension: {str(e)}")
+                                # Display description if available
+                                if "description" in result:
+                                    st.write(f"📝 **Description:** {result['description']}")
                                 
-                                # Display specifications with numerical values
-                                specs = details.get("specifications", [])
-                                if isinstance(specs, list) and specs:
-                                    st.write("⚙️ **Specifications:**")
-                                    for spec in specs:
-                                        try:
-                                            if isinstance(spec, dict):
-                                                value = spec.get("value", "N/A")
-                                                unit = spec.get("unit", "")
-                                                st.write(f"- {value} {unit}")
-                                        except Exception as e:
-                                            st.warning(f"Error displaying specification: {str(e)}")
+                                # Display path information
+                                if "path" in result:
+                                    st.write(f"📂 **Location in Structure:** {result['path']}")
                                 
-                                # Display direct quantities if available
-                                quantity = result.get("quantity")
-                                if isinstance(quantity, dict):
-                                    st.write("🔢 **Quantity:**")
-                                    try:
-                                        value = quantity.get("value", "N/A")
-                                        unit = quantity.get("unit", "")
-                                        st.write(f"- {value} {unit}")
-                                    except Exception as e:
-                                        st.warning(f"Error displaying quantity: {str(e)}")
+                                # Display context information
+                                if "context" in result:
+                                    st.write(f"🔎 **Context:** {result['context']}")
                                 
-                                # Display numerical values from requirements
+                                # Create columns for better organization
+                                col1, col2 = st.columns(2)
+                                
+                                with col1:
+                                    # Display dimensions with context
+                                    details = result.get("details", {})
+                                    dimensions = details.get("dimensions", [])
+                                    if dimensions:
+                                        st.write("📏 **Dimensions:**")
+                                        for dim in dimensions:
+                                            try:
+                                                if isinstance(dim, dict):
+                                                    value = dim.get("value", "N/A")
+                                                    unit = dim.get("unit", "")
+                                                    context = dim.get("context", "")
+                                                    st.write(f"- {value} {unit} {context}")
+                                            except Exception as e:
+                                                st.warning(f"Error displaying dimension: {str(e)}")
+                                    
+                                    # Display materials with properties
+                                    materials = details.get("materials", [])
+                                    if materials:
+                                        st.write("🧱 **Materials:**")
+                                        for material in materials:
+                                            if isinstance(material, dict):
+                                                mat_name = material.get("name", "")
+                                                properties = material.get("properties", {})
+                                                st.write(f"- {mat_name}")
+                                                for prop, value in properties.items():
+                                                    st.write(f"  • {prop}: {value}")
+                                            else:
+                                                st.write(f"- {material}")
+                                
+                                with col2:
+                                    # Display placement information
+                                    placement = details.get("placement", [])
+                                    if placement:
+                                        st.write("📍 **Placement Details:**")
+                                        for place in placement:
+                                            st.write(f"- {place}")
+                                    
+                                    # Display specifications with context
+                                    specs = details.get("specifications", [])
+                                    if specs:
+                                        st.write("⚙️ **Specifications:**")
+                                        for spec in specs:
+                                            try:
+                                                if isinstance(spec, dict):
+                                                    value = spec.get("value", "N/A")
+                                                    unit = spec.get("unit", "")
+                                                    context = spec.get("context", "")
+                                                    st.write(f"- {value} {unit} {context}")
+                                            except Exception as e:
+                                                st.warning(f"Error displaying specification: {str(e)}")
+                                
+                                # Display requirements with categories
                                 requirements = details.get("requirements", [])
-                                if isinstance(requirements, list) and requirements:
-                                    try:
-                                        numerical_reqs = []
-                                        for req in requirements:
-                                            if not isinstance(req, str):
-                                                continue
-                                            matches = re.findall(
-                                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
-                                                str(req).lower()
-                                            )
-                                            if matches:
-                                                numerical_reqs.extend(matches)
-                                        
-                                        if numerical_reqs:
-                                            st.write("📋 **Quantitative Requirements:**")
-                                            for value, unit in numerical_reqs:
-                                                st.write(f"- {value} {unit}")
-                                    except Exception as e:
-                                        st.warning(f"Error processing requirements: {str(e)}")
+                                if requirements:
+                                    st.write("📋 **Requirements:**")
+                                    
+                                    # Group requirements by category
+                                    req_categories = {
+                                        "Dimensional": [],
+                                        "Safety": [],
+                                        "Performance": [],
+                                        "Installation": [],
+                                        "Other": []
+                                    }
+                                    
+                                    for req in requirements:
+                                        req_text = str(req)
+                                        if any(dim in req_text.lower() for dim in ["width", "height", "depth", "length"]):
+                                            req_categories["Dimensional"].append(req_text)
+                                        elif any(safety in req_text.lower() for safety in ["fire", "emergency", "safety"]):
+                                            req_categories["Safety"].append(req_text)
+                                        elif any(perf in req_text.lower() for perf in ["performance", "rating", "capacity"]):
+                                            req_categories["Performance"].append(req_text)
+                                        elif any(inst in req_text.lower() for inst in ["install", "mount", "position"]):
+                                            req_categories["Installation"].append(req_text)
+                                        else:
+                                            req_categories["Other"].append(req_text)
+                                    
+                                    # Display requirements by category
+                                    for category, reqs in req_categories.items():
+                                        if reqs:
+                                            st.write(f"**{category} Requirements:**")
+                                            for req in reqs:
+                                                st.write(f"- {req}")
+                                
+                                # Display related components if available
+                                if "related_components" in result:
+                                    st.write("🔗 **Related Components:**")
+                                    for related in result["related_components"]:
+                                        st.write(f"- {related}")
+                                
+                                # Display any numerical values found in the requirements
+                                numerical_values = []
+                                for req in requirements:
+                                    matches = re.findall(
+                                        r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
+                                        str(req).lower()
+                                    )
+                                    if matches:
+                                        for value, unit in matches:
+                                            numerical_values.append((value, unit, req))
+                                
+                                if numerical_values:
+                                    st.write("🔢 **Quantitative Requirements:**")
+                                    for value, unit, context in numerical_values:
+                                        st.write(f"- {value} {unit} ({context})")
+                                
                         except Exception as e:
                             st.warning(f"Error displaying component {component_name}: {str(e)}")
                             continue
