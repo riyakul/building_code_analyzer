@@ -6,6 +6,7 @@ import pandas as pd
 import csv
 import io
 import time
+from difflib import get_close_matches
 
 class BuildingCodeAnalyzer:
     def __init__(self):
@@ -13,6 +14,47 @@ class BuildingCodeAnalyzer:
         self.quantities = {}
         self.guidelines = {}
         self.current_file = None
+        self.ifc_mapping = {
+            # Structural Elements
+            "foundation": "IfcFooting",
+            "wall": "IfcWall",
+            "beam": "IfcBeam",
+            "column": "IfcColumn",
+            "slab": "IfcSlab",
+            "roof": "IfcRoof",
+            
+            # Building Services
+            "electrical": "IfcElectricalCircuit",
+            "plumbing": "IfcDistributionSystem",
+            "hvac": "IfcDistributionSystem",
+            "ventilation": "IfcDistributionSystem",
+            
+            # Space Elements
+            "room": "IfcSpace",
+            "floor": "IfcBuildingStorey",
+            "building": "IfcBuilding",
+            
+            # Materials
+            "concrete": "IfcMaterial",
+            "steel": "IfcMaterial",
+            "timber": "IfcMaterial",
+            "brick": "IfcMaterial",
+            
+            # Properties
+            "dimension": "IfcPropertySingleValue",
+            "material": "IfcMaterialProperties",
+            "thermal": "IfcThermalMaterialProperties",
+            "structural": "IfcStructuralMaterialProperties"
+        }
+        
+        # Common search terms and their related components
+        self.search_aliases = {
+            "structure": ["foundation", "wall", "beam", "column", "slab"],
+            "services": ["electrical", "plumbing", "hvac", "ventilation"],
+            "materials": ["concrete", "steel", "timber", "brick"],
+            "spaces": ["room", "floor", "building"],
+            "properties": ["dimension", "material", "thermal", "structural"]
+        }
 
     def load_file(self, file_data) -> bool:
         """Load and process JSON data from uploaded file."""
@@ -163,6 +205,58 @@ class BuildingCodeAnalyzer:
         
         return details
 
+    def get_ifc_code(self, component_key: str) -> str:
+        """Get the corresponding IFC code for a component."""
+        key_lower = component_key.lower()
+        for term, ifc_code in self.ifc_mapping.items():
+            if term in key_lower:
+                return ifc_code
+        return "IfcBuildingElement"  # Default fallback
+
+    def smart_search(self, query: str) -> List[Dict]:
+        """Enhanced search with IFC database priority and natural language processing."""
+        results = []
+        query = query.lower()
+        
+        # First, search IFC database
+        ifc_results = self.search_ifc_database(query)
+        if ifc_results:
+            return ifc_results
+            
+        # If no IFC results, check uploaded data
+        if not self.components:
+            st.warning("No data loaded. Please upload a file first.")
+            return []
+
+        # Check for category-based searches
+        for category, components in self.search_aliases.items():
+            if category in query:
+                for comp in components:
+                    if comp in self.components:
+                        results.extend(self.search(comp))
+                return results
+
+        # Check for IFC code searches
+        if "ifc" in query:
+            for comp_key, comp_data in self.components.items():
+                ifc_code = self.get_ifc_code(comp_key)
+                if ifc_code.lower() in query:
+                    results.extend(self.search(comp_key))
+            return results
+
+        # Fuzzy matching for component names
+        component_names = list(self.components.keys())
+        matches = get_close_matches(query, component_names, n=3, cutoff=0.6)
+        
+        for match in matches:
+            results.extend(self.search(match))
+
+        # If no fuzzy matches, try direct search
+        if not results:
+            results = self.search(query)
+
+        return results
+
     def search(self, term: str) -> List[Dict]:
         """Search for components and extract structured information."""
         if not self.components:
@@ -190,6 +284,7 @@ class BuildingCodeAnalyzer:
                 result = {
                     "component": comp_key,
                     "type": self.detect_component_type(comp_key),
+                    "ifc_code": self.get_ifc_code(comp_key),
                     "details": {}
                 }
                 
@@ -255,6 +350,13 @@ def display_results(results: List[Dict]):
             col1, col2 = st.columns([1, 1])
             
             with col1:
+                # Display IFC code
+                st.write(f"**🏷️ IFC Code:** {result['ifc_code']}")
+                
+                # Display description if available (from IFC database)
+                if "description" in result:
+                    st.write(f"**📝 Description:** {result['description']}")
+                
                 # Display direct quantities
                 if "quantity" in result:
                     st.metric(
@@ -263,20 +365,32 @@ def display_results(results: List[Dict]):
                     )
                 
                 # Display dimensions
-                if result["details"].get("dimensions"):
+                if "properties" in result and "dimensions" in result["properties"]:
+                    st.write("**📏 Dimensions:**")
+                    for dim in result["properties"]["dimensions"]:
+                        st.write(f"- {dim}")
+                elif result["details"].get("dimensions"):
                     st.write("**📏 Dimensions:**")
                     for dim in result["details"]["dimensions"]:
                         st.write(f"- {dim['value']} {dim['unit']}")
                 
                 # Display materials
-                if result["details"].get("materials"):
+                if "properties" in result and "materials" in result["properties"]:
+                    st.write("**🧱 Materials:**")
+                    for material in result["properties"]["materials"]:
+                        st.write(f"- {material}")
+                elif result["details"].get("materials"):
                     st.write("**🧱 Materials:**")
                     for material in result["details"]["materials"]:
                         st.write(f"- {material.capitalize()}")
             
             with col2:
                 # Display specifications
-                if result["details"].get("specifications"):
+                if "properties" in result and "specifications" in result["properties"]:
+                    st.write("**📊 Specifications:**")
+                    for spec in result["properties"]["specifications"]:
+                        st.write(f"- {spec}")
+                elif result["details"].get("specifications"):
                     st.write("**📊 Specifications:**")
                     for spec in result["details"]["specifications"]:
                         st.write(f"- {spec['value']} {spec['unit']}")
@@ -288,7 +402,11 @@ def display_results(results: List[Dict]):
                         st.write(f"- {placement.capitalize()}")
             
             # Display requirements (full width)
-            if result["details"].get("requirements"):
+            if "properties" in result and "requirements" in result["properties"]:
+                st.write("**⚠️ Requirements:**")
+                for req in result["properties"]["requirements"]:
+                    st.write(f"- {req}")
+            elif result["details"].get("requirements"):
                 st.write("**⚠️ Requirements:**")
                 for req in result["details"]["requirements"]:
                     st.write(f"- {req.capitalize()}")
@@ -404,17 +522,28 @@ def main():
                 with col1:
                     search_term = st.text_input(
                         "Enter search term",
-                        placeholder="e.g., foundation.material",
-                        help="You can use dot notation for nested components"
+                        placeholder="e.g., foundation, wall, electrical, or IFC code",
+                        help="You can search by component name, category, or IFC code. Try natural language queries like 'show me all structural elements' or 'find electrical components'"
                     )
                 
                 with col2:
                     search_button = st.button("Search", type="primary", use_container_width=True)
                 
                 if search_button and search_term:
-                    results = st.session_state.analyzer.search(search_term)
+                    results = st.session_state.analyzer.smart_search(search_term)
                     st.session_state.search_results = results
                     display_results(results)
+                
+                # Add search tips
+                with st.expander("💡 Search Tips"):
+                    st.markdown("""
+                    You can search using:
+                    - Component names (e.g., 'foundation', 'wall')
+                    - Categories (e.g., 'structure', 'services', 'materials')
+                    - IFC codes (e.g., 'IfcWall', 'IfcBeam')
+                    - Natural language (e.g., 'show me all structural elements')
+                    - Properties (e.g., 'dimensions', 'materials')
+                    """)
                 
                 # Component type filter
                 st.subheader("Filter by Type")
@@ -439,6 +568,7 @@ def main():
                             for key, comp in filtered_components.items():
                                 with st.expander(key):
                                     st.write(f"**Type:** {comp['type']}")
+                                    st.write(f"**IFC Code:** {st.session_state.analyzer.get_ifc_code(key)}")
                                     if key in st.session_state.analyzer.quantities:
                                         q = st.session_state.analyzer.quantities[key]
                                         st.metric("Quantity", f"{q['value']} {q['unit']}")
