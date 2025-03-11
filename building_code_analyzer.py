@@ -14,6 +14,88 @@ class BuildingCodeAnalyzer:
         self.quantities = {}
         self.guidelines = {}
         self.current_file = None
+        self.ifc_database = {
+            # Structural Elements
+            "IfcFooting": {
+                "name": "Foundation",
+                "type": "Structural",
+                "description": "Building foundation element",
+                "properties": {
+                    "dimensions": ["depth", "width", "length"],
+                    "materials": ["concrete", "steel reinforcement"],
+                    "requirements": ["minimum depth", "bearing capacity"]
+                }
+            },
+            "IfcWall": {
+                "name": "Wall",
+                "type": "Structural",
+                "description": "Vertical building element",
+                "properties": {
+                    "dimensions": ["height", "thickness", "length"],
+                    "materials": ["brick", "concrete", "steel", "timber"],
+                    "requirements": ["fire rating", "thermal resistance"]
+                }
+            },
+            "IfcBeam": {
+                "name": "Beam",
+                "type": "Structural",
+                "description": "Horizontal structural element",
+                "properties": {
+                    "dimensions": ["span", "depth", "width"],
+                    "materials": ["steel", "concrete", "timber"],
+                    "requirements": ["load capacity", "deflection limits"]
+                }
+            },
+            "IfcColumn": {
+                "name": "Column",
+                "type": "Structural",
+                "description": "Vertical structural element",
+                "properties": {
+                    "dimensions": ["height", "width", "depth"],
+                    "materials": ["concrete", "steel", "timber"],
+                    "requirements": ["axial load capacity", "buckling resistance"]
+                }
+            },
+            # Building Services
+            "IfcElectricalCircuit": {
+                "name": "Electrical Circuit",
+                "type": "Services",
+                "description": "Electrical distribution system",
+                "properties": {
+                    "specifications": ["voltage", "current", "power"],
+                    "requirements": ["circuit protection", "wire size"]
+                }
+            },
+            "IfcDistributionSystem": {
+                "name": "Distribution System",
+                "type": "Services",
+                "description": "Building service distribution system",
+                "properties": {
+                    "specifications": ["flow rate", "pressure"],
+                    "requirements": ["insulation", "accessibility"]
+                }
+            },
+            # Space Elements
+            "IfcSpace": {
+                "name": "Room",
+                "type": "Space",
+                "description": "Occupiable space",
+                "properties": {
+                    "dimensions": ["area", "height"],
+                    "requirements": ["ventilation", "lighting"]
+                }
+            },
+            "IfcBuildingStorey": {
+                "name": "Floor",
+                "type": "Space",
+                "description": "Building floor level",
+                "properties": {
+                    "dimensions": ["height", "area"],
+                    "requirements": ["fire separation", "accessibility"]
+                }
+            }
+        }
+        
         self.ifc_mapping = {
             # Structural Elements
             "foundation": "IfcFooting",
@@ -306,6 +388,51 @@ class BuildingCodeAnalyzer:
         
         return results
 
+    def search_ifc_database(self, query: str) -> List[Dict]:
+        """Search the IFC database for matching components."""
+        results = []
+        query = query.lower()
+        
+        # Direct IFC code search
+        if query.startswith("ifc"):
+            for ifc_code, data in self.ifc_database.items():
+                if ifc_code.lower() == query:
+                    results.append({
+                        "component": data["name"],
+                        "type": data["type"],
+                        "ifc_code": ifc_code,
+                        "description": data["description"],
+                        "properties": data["properties"]
+                    })
+                    return results
+        
+        # Search by component name or description
+        for ifc_code, data in self.ifc_database.items():
+            if (query in data["name"].lower() or 
+                query in data["description"].lower() or
+                query in data["type"].lower()):
+                results.append({
+                    "component": data["name"],
+                    "type": data["type"],
+                    "ifc_code": ifc_code,
+                    "description": data["description"],
+                    "properties": data["properties"]
+                })
+            
+            # Search in properties
+            for category, props in data["properties"].items():
+                if isinstance(props, list) and any(query in prop.lower() for prop in props):
+                    if not any(r["ifc_code"] == ifc_code for r in results):  # Avoid duplicates
+                        results.append({
+                            "component": data["name"],
+                            "type": data["type"],
+                            "ifc_code": ifc_code,
+                            "description": data["description"],
+                            "properties": data["properties"]
+                        })
+        
+        return results
+
 def export_results(results: List[Dict], format: str) -> Optional[tuple]:
     """Export results to CSV or JSON format."""
     if not results:
@@ -477,6 +604,7 @@ def main():
             st.session_state.analyzer = BuildingCodeAnalyzer()
             st.session_state.uploaded_file = None
             st.session_state.search_results = None
+            st.session_state.last_search = None
 
         # Main content - Search interface first
         st.subheader("Search Building Components")
@@ -504,15 +632,26 @@ def main():
             """)
         
         if search_button and search_term:
-            # First try searching the IFC database
-            results = st.session_state.analyzer.search_ifc_database(search_term)
-            
-            # If we have uploaded data, also search that
-            if len(st.session_state.analyzer.components) > 0:
-                results.extend(st.session_state.analyzer.smart_search(search_term))
-            
-            st.session_state.search_results = results
-            display_results(results)
+            try:
+                # First try searching the IFC database
+                results = st.session_state.analyzer.search_ifc_database(search_term)
+                
+                # If we have uploaded data, also search that
+                if hasattr(st.session_state.analyzer, 'components') and len(st.session_state.analyzer.components) > 0:
+                    user_data_results = st.session_state.analyzer.smart_search(search_term)
+                    if user_data_results:
+                        results.extend(user_data_results)
+                
+                st.session_state.search_results = results
+                st.session_state.last_search = search_term
+                
+                if results:
+                    display_results(results)
+                else:
+                    st.info(f"No results found for '{search_term}'. Try a different search term or check the search tips.")
+            except Exception as e:
+                st.error(f"Search error: {str(e)}")
+                st.info("Please try a different search term or check the search tips.")
 
         # Sidebar - Move file upload to sidebar
         with st.sidebar:
@@ -543,7 +682,7 @@ def main():
                     st.error(f"Error loading file: {str(e)}")
                     st.session_state.analyzer = BuildingCodeAnalyzer()
             
-            if len(st.session_state.analyzer.components) > 0:
+            if hasattr(st.session_state.analyzer, 'components') and len(st.session_state.analyzer.components) > 0:
                 st.markdown("---")
                 st.header("Uploaded Data Statistics")
                 try:
@@ -557,7 +696,11 @@ def main():
             # Add IFC database statistics
             st.markdown("---")
             st.header("IFC Database")
-            st.metric("Available IFC Components", len(st.session_state.analyzer.ifc_database))
+            try:
+                st.metric("Available IFC Components", len(st.session_state.analyzer.ifc_database))
+            except Exception as e:
+                st.error("Error accessing IFC database")
+                st.session_state.analyzer = BuildingCodeAnalyzer()
             
             # Component type filter
             st.markdown("---")
@@ -588,8 +731,11 @@ def main():
                 st.info("Please try searching for components instead.")
 
     except Exception as e:
-        st.error("Application error occurred. Please refresh the page.")
-        st.session_state.clear()  # Clear session state on critical error
+        st.error(f"Application error occurred: {str(e)}")
+        st.info("Please refresh the page to restart the application.")
+        if st.button("Clear Session State and Refresh"):
+            st.session_state.clear()
+            st.rerun()
 
 if __name__ == "__main__":
     main() 
