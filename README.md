@@ -1,71 +1,77 @@
-# Building Code Analyzer 🏗️
+# IFC Code Analyzer
 
-A Python-based tool for analyzing and searching building codes and component specifications.
+A Streamlit web application for analyzing IFC (Industry Foundation Classes) files and extracting building component information.
 
 ## Features
 
-- Upload and analyze JSON-formatted building component data
-- Search through components by name, type, specifications, and requirements
-- Extract and display structured information including:
-  - 📏 Dimensions (height, width, depth)
-  - ⚙️ Specifications (technical values)
-  - 🔨 Materials
-  - 📋 Requirements
-  - 🔢 Quantities
+- Upload and analyze IFC files
+- Upload and analyze JSON files with building component data
+- Natural language search queries for components
+- Extract quantitative information and specifications
+- View component templates and requirements
+- Display relationships between building elements
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/building_code_analyzer.git
-cd building_code_analyzer
+git clone https://github.com/yourusername/ifc-code-analyzer.git
+cd ifc-code-analyzer
 ```
 
-2. Install required packages:
+2. Create a virtual environment (optional but recommended):
 ```bash
-pip install streamlit pandas
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
 ```
 
 ## Usage
 
-1. Run the Streamlit app:
+1. Start the Streamlit app:
 ```bash
-streamlit run building_code_analyzer.py
+streamlit run ifc_analyzer.py
 ```
 
-2. Upload your JSON file containing building component data
-3. Use the search interface to find components and their specifications
+2. Open your web browser and navigate to the URL shown in the terminal (usually http://localhost:8501)
 
-## JSON Data Format
+3. Use the application:
+   - Upload an IFC or JSON file using the sidebar
+   - Enter natural language queries in the search box
+   - View component templates and requirements
+   - Explore extracted information in tables and expandable sections
 
-Your JSON file should contain building component information in a structured format. Example:
+## Query Examples
 
-```json
-{
-  "wall": {
-    "type": "Structural",
-    "height": "3000 mm",
-    "materials": ["concrete", "steel reinforcement"],
-    "requirements": "Must have minimum thickness of 200 mm"
-  }
-}
-```
+- "Show me all walls with height greater than 3m"
+- "Find beams with specific material properties"
+- "List columns with load-bearing capacity"
+- "Display slab thickness requirements"
 
-## Component Types
+## Supported Components
 
-The analyzer automatically categorizes components into:
-- Structural (walls, beams, foundations)
-- Architectural (doors, windows, stairs)
-- Utilities (electrical, plumbing, HVAC)
-- Safety (fire protection, emergency exits)
+- Walls (IfcWall)
+- Beams (IfcBeam)
+- Columns (IfcColumn)
+- Slabs (IfcSlab)
 
-## Search Examples
-
-- "wall height requirements"
-- "door dimensions"
-- "concrete foundation"
-- "minimum ceiling height"
+Each component includes:
+- Properties (dimensions, materials)
+- Quantities (area, volume, weight)
+- Relationships with other building elements
 
 ## Contributing
 
-Feel free to submit issues and enhancement requests! 
+1. Fork the repository
+2. Create a new branch for your feature
+3. Commit your changes
+4. Push to your branch
+5. Create a Pull Request
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details. 

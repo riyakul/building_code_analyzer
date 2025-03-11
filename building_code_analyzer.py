@@ -195,116 +195,93 @@ class BuildingCodeAnalyzer:
         """Load and process JSON data from uploaded file."""
         try:
             data = json.loads(file_data)
-            return self._process_data(data)
-        except Exception as e:
-            st.error(f"Error loading file: {e}")
-            return False
-
-    def _process_data(self, data) -> bool:
-        """Process the JSON data and organize it into components, quantities, and guidelines."""
-        try:
+            
+            # Store the uploaded file data
+            self.current_file = data
+            
             # Clear existing data
             self.components.clear()
             self.quantities.clear()
             self.guidelines.clear()
-
-            def extract_component_info(value, path):
-                """Extract numerical values and requirements from a value."""
-                info = {
-                    "numerical_values": [],
-                    "requirements": [],
-                    "materials": [],
-                    "dimensions": [],
-                    "specifications": []
-                }
-                
-                if isinstance(value, str):
-                    # Extract numerical values with units
-                    numerical = re.findall(
-                        r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)", 
-                        value.lower()
-                    )
-                    for num, unit in numerical:
-                        if unit in ["mm", "cm", "m", "ft", "in"]:
-                            info["dimensions"].append({"value": float(num), "unit": unit})
-                        else:
-                            info["specifications"].append({"value": float(num), "unit": unit})
-                    
-                    # Extract materials
-                    materials = ["concrete", "steel", "timber", "wood", "brick", "metal", 
-                               "aluminum", "copper", "pvc", "glass", "plasterboard", "insulation"]
-                    found_materials = [m for m in materials if m in value.lower()]
-                    if found_materials:
-                        info["materials"].extend(found_materials)
-                    
-                    # Extract requirements
-                    if any(word in value.lower() for word in ["must", "shall", "should", "require", "minimum", "maximum"]):
-                        info["requirements"].append(value)
-                
-                return info
-
-            def recurse(d, parent=""):
-                if not isinstance(d, (dict, list)):
-                    return
-                
-                if isinstance(d, dict):
-                    for k, v in d.items():
-                        try:
-                            key = f"{parent}.{k}" if parent else k
-                            
-                            # Store component info
-                            component_info = {
-                                "name": k,
-                                "type": self.detect_component_type(k),
-                                "path": key
+            
+            def process_node(node, path="", context=""):
+                """Process each node in the JSON structure."""
+                if isinstance(node, dict):
+                    for key, value in node.items():
+                        current_path = f"{path}.{key}" if path else key
+                        current_context = f"{context} - {key}" if context else key
+                        
+                        # Create a component entry
+                        component_info = {
+                            "name": key,
+                            "type": self.detect_component_type(key),
+                            "path": current_path,
+                            "context": current_context,
+                            "details": {
+                                "dimensions": [],
+                                "materials": [],
+                                "requirements": [],
+                                "specifications": []
                             }
+                        }
+                        
+                        # Process the value
+                        if isinstance(value, dict):
+                            # Extract direct properties
+                            for prop_key, prop_value in value.items():
+                                if prop_key in ["thickness", "height", "width", "depth", "area"]:
+                                    component_info["details"]["dimensions"].append({
+                                        "type": prop_key,
+                                        "value": prop_value,
+                                        "unit": "m" if prop_key in ["thickness", "height", "width", "depth"] else "m²"
+                                    })
+                                elif prop_key == "material":
+                                    component_info["details"]["materials"].append({
+                                        "name": prop_value,
+                                        "context": current_context
+                                    })
+                                elif prop_key == "description":
+                                    component_info["description"] = prop_value
+                                    # Extract requirements from description
+                                    if any(word in prop_value.lower() for word in ["must", "shall", "should", "require", "minimum", "maximum"]):
+                                        component_info["details"]["requirements"].append({
+                                            "requirement": prop_value,
+                                            "type": "mandatory" if any(word in prop_value.lower() for word in ["must", "shall", "require"]) else "recommended",
+                                            "context": current_context
+                                        })
                             
-                            # Process values
-                            if isinstance(v, (int, float)):
-                                self.quantities[key] = {
-                                    "value": v,
-                                    "unit": "units",
-                                    "component": key
-                                }
-                                component_info["quantity"] = {"value": v, "unit": "units"}
-                            elif isinstance(v, str):
-                                extracted_info = extract_component_info(v, key)
-                                component_info.update(extracted_info)
-                                self.guidelines[key] = {
-                                    "description": v,
-                                    "component": key,
-                                    **extracted_info
-                                }
-                            
-                            self.components[key] = component_info
+                            # Store the component
+                            self.components[current_path] = component_info
                             
                             # Recurse into nested structures
-                            if isinstance(v, (dict, list)):
-                                recurse(v, key)
-                        except Exception as e:
-                            st.warning(f"Error processing key '{k}': {str(e)}")
-                            continue
-                            
-                elif isinstance(d, list):
-                    for i, item in enumerate(d):
-                        try:
-                            recurse(item, f"{parent}[{i}]")
-                        except Exception as e:
-                            st.warning(f"Error processing list item {i}: {str(e)}")
-                            continue
-
-            # Process the root data
-            recurse(data)
-            
-            # Verify we have processed some data
-            if not self.components:
-                st.error("No components were processed from the data")
-                return False
+                            process_node(value, current_path, current_context)
+                        elif isinstance(value, (int, float)):
+                            # Store as quantity
+                            self.quantities[current_path] = {
+                                "value": value,
+                                "unit": "units",
+                                "component": current_path,
+                                "context": current_context
+                            }
+                        elif isinstance(value, str):
+                            # Store as guideline
+                            self.guidelines[current_path] = {
+                                "description": value,
+                                "component": current_path,
+                                "context": current_context
+                            }
                 
-            return True
+                elif isinstance(node, list):
+                    for i, item in enumerate(node):
+                        process_node(item, f"{path}[{i}]", context)
+            
+            # Process the data
+            process_node(data)
+            
+            return len(self.components) > 0
             
         except Exception as e:
-            st.error(f"Error processing data: {str(e)}")
+            st.error(f"Error loading file: {str(e)}")
             return False
 
     def detect_component_type(self, key: str) -> str:
@@ -454,35 +431,27 @@ class BuildingCodeAnalyzer:
             query = term.lower()
             
             # Extract key information from natural language query
-            dimension_terms = ["width", "height", "depth", "length", "diameter", "size"]
-            material_terms = ["made of", "material", "built with", "constructed with"]
-            requirement_terms = ["requirement", "required", "must be", "should be", "minimum", "maximum"]
+            dimension_terms = ["width", "height", "depth", "length", "diameter", "size", "thickness", "area"]
+            material_terms = ["made of", "material", "built with", "constructed with", "composition"]
+            requirement_terms = ["requirement", "required", "must be", "should be", "minimum", "maximum", "at least", "no more than"]
+            placement_terms = ["located", "installed", "mounted", "positioned", "placed", "between", "above", "below", "adjacent"]
             
             # Remove common question phrases
-            query = query.replace("i want to know", "")
-            query = query.replace("tell me", "")
-            query = query.replace("what is", "")
-            query = query.replace("show me", "")
-            query = query.replace("the", "")
-            query = query.strip()
+            query = re.sub(r'\b(i want to know|tell me|what is|show me|the)\b', '', query).strip()
             
             # Extract search focus
             search_focus = {
                 "dimension": any(term in query for term in dimension_terms),
                 "material": any(term in query for term in material_terms),
-                "requirement": any(term in query for term in requirement_terms)
+                "requirement": any(term in query for term in requirement_terms),
+                "placement": any(term in query for term in placement_terms)
             }
             
             # Extract component name (last word or words after "of")
-            component_name = query.split("of ")[-1].strip() if "of" in query else query
-            
-            # Create copies of data structures to prevent modification during iteration
-            components_to_search = dict(self.components)
-            guidelines_copy = dict(self.guidelines)
-            quantities_copy = dict(self.quantities)
+            component_name = query.split("of ")[-1].strip() if "of" in query else query.split()[-1]
             
             # Search through components
-            for comp_key, comp_data in components_to_search.items():
+            for comp_key, comp_data in self.components.items():
                 try:
                     should_include = False
                     comp_key_lower = comp_key.lower()
@@ -492,8 +461,8 @@ class BuildingCodeAnalyzer:
                         should_include = True
                     
                     # Check guidelines and specifications
-                    if comp_key in guidelines_copy:
-                        guideline = guidelines_copy[comp_key]
+                    if comp_key in self.guidelines:
+                        guideline = self.guidelines[comp_key]
                         if component_name in str(guideline).lower():
                             should_include = True
                     
@@ -501,56 +470,104 @@ class BuildingCodeAnalyzer:
                         result = {
                             "component": comp_key,
                             "type": comp_data.get("type", "Unknown"),
-                            "details": {}
+                            "details": {
+                                "dimensions": [],
+                                "materials": [],
+                                "requirements": [],
+                                "placement": [],
+                                "specifications": []
+                            }
                         }
                         
-                        # Add relevant details based on search focus
-                        if "details" in comp_data:
-                            details = comp_data["details"]
-                            if search_focus["dimension"] and "dimensions" in details:
-                                result["details"]["dimensions"] = details["dimensions"]
-                            if search_focus["material"] and "materials" in details:
-                                result["details"]["materials"] = details["materials"]
-                            if search_focus["requirement"] and "requirements" in details:
-                                result["details"]["requirements"] = details["requirements"]
+                        # Add context and path information
+                        if "context" in comp_data:
+                            result["context"] = comp_data["context"]
+                        if "path" in comp_data:
+                            result["path"] = comp_data["path"]
                         
-                        # Add all details if no specific focus
-                        if not any(search_focus.values()):
-                            for key in ["dimensions", "materials", "requirements", "specifications"]:
-                                if key in comp_data:
-                                    result["details"][key] = comp_data[key]
+                        # Add description if available
+                        if "description" in comp_data:
+                            result["description"] = comp_data["description"]
+                        
+                        # Extract numerical values with units
+                        if comp_key in self.guidelines:
+                            guideline_text = str(self.guidelines[comp_key])
+                            numerical_specs = re.findall(
+                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
+                                guideline_text
+                            )
+                            
+                            for value, unit in numerical_specs:
+                                spec = {
+                                    "value": float(value),
+                                    "unit": unit,
+                                    "context": comp_data.get("context", "")
+                                }
+                                
+                                # Categorize the specification
+                                if unit in ["mm", "cm", "m", "ft", "in"]:
+                                    result["details"]["dimensions"].append(spec)
+                                elif unit in ["MPa", "PSI", "kN", "kPa"]:
+                                    result["details"]["specifications"].append(spec)
+                        
+                        # Add dimensions from component data
+                        if "dimensions" in comp_data:
+                            result["details"]["dimensions"].extend(comp_data["dimensions"])
+                        
+                        # Add materials with context
+                        if "materials" in comp_data:
+                            result["details"]["materials"].extend(comp_data["materials"])
+                        
+                        # Add placement information
+                        if "placement" in comp_data:
+                            result["details"]["placement"].extend(comp_data["placement"])
+                        elif comp_key in self.guidelines:
+                            # Extract placement information from guidelines
+                            guideline_text = str(self.guidelines[comp_key])
+                            for term in placement_terms:
+                                if term in guideline_text.lower():
+                                    sentences = re.split(r'[.!?]+', guideline_text)
+                                    for sentence in sentences:
+                                        if term in sentence.lower():
+                                            result["details"]["placement"].append(sentence.strip())
+                        
+                        # Add requirements with context
+                        if "requirements" in comp_data:
+                            result["details"]["requirements"].extend(comp_data["requirements"])
+                        elif comp_key in self.guidelines:
+                            # Extract requirements from guidelines
+                            guideline_text = str(self.guidelines[comp_key])
+                            for term in requirement_terms:
+                                if term in guideline_text.lower():
+                                    sentences = re.split(r'[.!?]+', guideline_text)
+                                    for sentence in sentences:
+                                        result["details"]["requirements"].append({
+                                            "requirement": sentence.strip(),
+                                            "type": "mandatory" if term in ["must", "required", "shall"] else "recommended",
+                                            "context": comp_data.get("context", "")
+                                        })
+                        
+                        # Add quantity information if available
+                        if comp_key in self.quantities:
+                            result["quantity"] = self.quantities[comp_key]
                         
                         results.append(result)
+                        
                 except Exception as e:
                     st.warning(f"Error processing component {comp_key}: {str(e)}")
                     continue
             
-            # Search in IFC database with the same focus
-            try:
-                ifc_results = self.search_ifc_database(component_name)
-                if ifc_results:
-                    # Filter IFC results based on search focus
-                    for result in ifc_results:
-                        if "properties" in result:
-                            filtered_props = {}
-                            if search_focus["dimension"]:
-                                filtered_props["dimensions"] = result["properties"].get("dimensions", [])
-                            if search_focus["material"]:
-                                filtered_props["materials"] = result["properties"].get("materials", [])
-                            if search_focus["requirement"]:
-                                filtered_props["requirements"] = result["properties"].get("requirements", [])
-                            result["properties"] = filtered_props if any(filtered_props.values()) else result["properties"]
-                    results.extend(ifc_results)
-            except Exception as e:
-                st.warning(f"Error searching IFC database: {str(e)}")
-            
-            # Search building codes with the same focus
+            # Search in building codes and IFC database
             try:
                 building_code_results = self.search_building_codes(component_name)
                 if building_code_results:
                     results.extend(building_code_results)
+                    
+                ifc_results = self.search_ifc_database(component_name)
+                if ifc_results:
+                    results.extend(ifc_results)
             except Exception as e:
-                st.warning(f"Error searching building codes: {str(e)}")
+                st.warning(f"Error searching external databases: {str(e)}")
             
             return results
             
@@ -632,105 +649,110 @@ class BuildingCodeAnalyzer:
         results = []
         query = query.lower()
         
-        # Expand search terms to include related terms
-        component_terms = {
-            "foundation": ["foundation", "footing", "base", "substructure"],
-            "standpipe": ["standpipe", "stand pipe", "riser", "fire protection"],
-            "door": ["door", "doorway", "entrance"],
-            "window": ["window", "glazing", "opening"],
-            "wall": ["wall", "partition", "barrier"],
-            "ceiling": ["ceiling", "roof", "overhead"],
-            "floor": ["floor", "flooring", "ground"],
-            "bathroom": ["bathroom", "restroom", "toilet"],
-            "kitchen": ["kitchen", "cooking", "food preparation"],
-            "stair": ["stair", "stairway", "steps"],
-            "elevator": ["elevator", "lift"],
-            "corridor": ["corridor", "hallway", "passage"],
-            "exit": ["exit", "egress", "escape"],
-            "fire": ["fire", "flame", "burning", "sprinkler"]
+        # Define component categories and their related terms
+        component_categories = {
+            "wall": {
+                "terms": ["wall", "partition", "barrier", "enclosure"],
+                "types": ["exterior", "interior", "fire", "load-bearing", "non-load-bearing", "shear"],
+                "properties": ["height", "thickness", "width", "fire-rating", "insulation", "structural"]
+            },
+            "door": {
+                "terms": ["door", "doorway", "entrance", "exit"],
+                "types": ["exterior", "interior", "fire", "emergency", "sliding", "revolving"],
+                "properties": ["width", "height", "clearance", "fire-rating", "accessibility"]
+            },
+            "window": {
+                "terms": ["window", "glazing", "opening"],
+                "types": ["exterior", "interior", "emergency", "fixed", "operable"],
+                "properties": ["width", "height", "sill-height", "glazing-area", "ventilation"]
+            },
+            "foundation": {
+                "terms": ["foundation", "footing", "base", "substructure"],
+                "types": ["strip", "pad", "raft", "pile", "shallow", "deep"],
+                "properties": ["depth", "width", "bearing-capacity", "reinforcement"]
+            }
         }
         
-        # If no specific location is selected, include IFC database results
-        if not location:
-            # Search IFC database first
-            for ifc_code, data in self.ifc_database.items():
-                if any(term in query for term in component_terms.get("foundation", [])):
-                    if "Foundation" in data["name"] or any(term in data["description"].lower() for term in component_terms["foundation"]):
-                        results.append({
-                            "component": "Foundation",
-                            "type": "Structural",
-                            "location": "IFC Database",
-                            "value": data["description"],
-                            "path": f"IFC.{ifc_code}",
-                            "context": "IFC Standard Component",
-                            "numerical_values": [],
-                            "requirements": data["properties"].get("requirements", [])
-                        })
+        # Find matching component category
+        target_category = None
+        target_terms = []
+        for category, info in component_categories.items():
+            if any(term in query for term in info["terms"]):
+                target_category = category
+                target_terms = info["terms"]
+                break
         
-        # Search through building codes
-        def search_dict(d: Dict, path: str = "", context: str = None) -> None:
-            if not isinstance(d, dict):
-                return
-                
-            for k, v in d.items():
-                k_lower = str(k).lower()
-                new_path = f"{path}.{k}" if path else k
-                new_context = k if context is None else f"{context} - {k}"
-                
-                # Check for foundation-related terms
-                if any(term in k_lower or (isinstance(v, str) and term in v.lower()) 
-                      for term in component_terms.get("foundation", [])):
+        if not target_category:
+            return results
+        
+        def extract_requirements(data: Dict, path: str = "", context: str = "") -> List[Dict]:
+            """Extract requirements from nested dictionary structure."""
+            requirements = []
+            
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    current_path = f"{path}.{key}" if path else key
+                    current_context = f"{context} - {key}" if context else key
                     
-                    if isinstance(v, (str, int, float)):
-                        results.append({
-                            "component": k,
-                            "type": "Structural",
-                            "location": location or "Unknown Location",
-                            "value": str(v),
-                            "path": new_path,
-                            "context": new_context,
-                            "numerical_values": extract_numerical_values(str(v)),
-                            "requirements": []
-                        })
-                    elif isinstance(v, dict):
-                        # Handle nested requirements
-                        for req_k, req_v in v.items():
-                            if isinstance(req_v, (str, int, float)):
-                                results.append({
-                                    "component": k,
-                                    "type": "Structural",
-                                    "location": location or "Unknown Location",
-                                    "requirement": req_k,
-                                    "value": str(req_v),
-                                    "path": f"{new_path}.{req_k}",
-                                    "context": f"{new_context} - {req_k}",
-                                    "numerical_values": extract_numerical_values(str(req_v)),
-                                    "requirements": []
-                                })
-                
-                # Continue searching nested structures
-                search_dict(v, new_path, new_context)
-        
-        def extract_numerical_values(text: str) -> List[tuple]:
-            """Extract numerical values with units from text."""
-            if not isinstance(text, str):
-                return []
-            return re.findall(
-                r'(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³)',
-                text.lower()
-            )
+                    # Check if this node contains relevant information
+                    key_lower = key.lower()
+                    if any(term in key_lower for term in target_terms):
+                        if isinstance(value, str):
+                            # Extract numerical values with units
+                            numerical = re.findall(
+                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
+                                value.lower()
+                            )
+                            
+                            requirement = {
+                                "component": key,
+                                "type": "requirement",
+                                "path": current_path,
+                                "context": current_context,
+                                "value": value,
+                                "numerical_values": [{"value": float(num), "unit": unit} for num, unit in numerical],
+                                "category": "Unknown"
+                            }
+                            
+                            # Categorize requirement
+                            if any(word in value.lower() for word in ["height", "width", "thickness", "dimension"]):
+                                requirement["category"] = "Dimensional"
+                            elif any(word in value.lower() for word in ["fire", "safety", "emergency", "protection"]):
+                                requirement["category"] = "Safety"
+                            elif any(word in value.lower() for word in ["material", "concrete", "steel", "wood"]):
+                                requirement["category"] = "Material"
+                            elif any(word in value.lower() for word in ["install", "construct", "build", "place"]):
+                                requirement["category"] = "Construction"
+                            elif any(word in value.lower() for word in ["load", "strength", "capacity", "structural"]):
+                                requirement["category"] = "Structural"
+                            
+                            requirements.append(requirement)
+                        
+                        elif isinstance(value, dict):
+                            # If it's a dictionary, it might contain nested requirements
+                            requirements.extend(extract_requirements(value, current_path, current_context))
+                    
+                    # Continue searching in nested structures
+                    elif isinstance(value, (dict, list)):
+                        requirements.extend(extract_requirements(value, current_path, current_context))
+            
+            elif isinstance(data, list):
+                for i, item in enumerate(data):
+                    if isinstance(item, (dict, list)):
+                        requirements.extend(extract_requirements(item, f"{path}[{i}]", context))
+            
+            return requirements
         
         # Search through each location's building codes
         if location:
             if location in self.building_codes:
-                search_dict(self.building_codes[location])
+                results.extend(extract_requirements(self.building_codes[location]))
         else:
             for loc, code_data in self.building_codes.items():
-                search_dict(code_data)
-                # Update location in results
-                for result in results:
-                    if result["location"] == "Unknown Location":
-                        result["location"] = loc
+                location_results = extract_requirements(code_data)
+                for result in location_results:
+                    result["location"] = loc
+                results.extend(location_results)
         
         return results
 
@@ -792,180 +814,85 @@ class BuildingCodeAnalyzer:
     def display_results(self, results: List[Dict]):
         """Display search results with comprehensive information and context."""
         try:
-            if not isinstance(results, list):
-                st.warning("Invalid results format")
-                return
-                
             if not results:
                 st.warning("No matching components found.")
                 return
 
             st.write(f"Found {len(results)} matching components:")
             
-            # Group results by component type with error handling
-            results_by_type = {}
-            for idx, result in enumerate(results):
-                try:
-                    if not isinstance(result, dict):
-                        continue
-                        
-                    comp_type = str(result.get("type", "Unknown"))
-                    if comp_type not in results_by_type:
-                        results_by_type[comp_type] = []
-                    results_by_type[comp_type].append(result)
-                except Exception as e:
-                    st.warning(f"Error processing result {idx}: {str(e)}")
-                    continue
-            
-            # Display results organized by type
-            for comp_type, type_results in results_by_type.items():
-                try:
-                    if not isinstance(type_results, list) or not type_results:
-                        continue
-                        
-                    st.subheader(f"{comp_type} Components")
-                    
-                    for result in type_results:
-                        try:
-                            if not isinstance(result, dict):
-                                continue
-                                
-                            component_name = str(result.get("component", "Unknown Component"))
-                            with st.expander(f"Component: {component_name}"):
-                                # Display source information
-                                source = result.get("dataset", "Local Database")
-                                st.write(f"🔍 **Source:** {source}")
-                                
-                                # Display description if available
-                                if "description" in result:
-                                    st.write(f"📝 **Description:** {result['description']}")
-                                
-                                # Display path information
-                                if "path" in result:
-                                    st.write(f"📂 **Location in Structure:** {result['path']}")
-                                
-                                # Display context information
-                                if "context" in result:
-                                    st.write(f"🔎 **Context:** {result['context']}")
-                                
-                                # Create columns for better organization
-                                col1, col2 = st.columns(2)
-                                
-                                with col1:
-                                    # Display dimensions with context
-                                    details = result.get("details", {})
-                                    dimensions = details.get("dimensions", [])
-                                    if dimensions:
-                                        st.write("📏 **Dimensions:**")
-                                        for dim in dimensions:
-                                            try:
-                                                if isinstance(dim, dict):
-                                                    value = dim.get("value", "N/A")
-                                                    unit = dim.get("unit", "")
-                                                    context = dim.get("context", "")
-                                                    st.write(f"- {value} {unit} {context}")
-                                            except Exception as e:
-                                                st.warning(f"Error displaying dimension: {str(e)}")
-                                    
-                                    # Display materials with properties
-                                    materials = details.get("materials", [])
-                                    if materials:
-                                        st.write("🧱 **Materials:**")
-                                        for material in materials:
-                                            if isinstance(material, dict):
-                                                mat_name = material.get("name", "")
-                                                properties = material.get("properties", {})
-                                                st.write(f"- {mat_name}")
-                                                for prop, value in properties.items():
-                                                    st.write(f"  • {prop}: {value}")
-                                            else:
-                                                st.write(f"- {material}")
-                                
-                                with col2:
-                                    # Display placement information
-                                    placement = details.get("placement", [])
-                                    if placement:
-                                        st.write("📍 **Placement Details:**")
-                                        for place in placement:
-                                            st.write(f"- {place}")
-                                    
-                                    # Display specifications with context
-                                    specs = details.get("specifications", [])
-                                    if specs:
-                                        st.write("⚙️ **Specifications:**")
-                                        for spec in specs:
-                                            try:
-                                                if isinstance(spec, dict):
-                                                    value = spec.get("value", "N/A")
-                                                    unit = spec.get("unit", "")
-                                                    context = spec.get("context", "")
-                                                    st.write(f"- {value} {unit} {context}")
-                                            except Exception as e:
-                                                st.warning(f"Error displaying specification: {str(e)}")
-                                
-                                # Display requirements with categories
-                                requirements = details.get("requirements", [])
-                                if requirements:
-                                    st.write("📋 **Requirements:**")
-                                    
-                                    # Group requirements by category
-                                    req_categories = {
-                                        "Dimensional": [],
-                                        "Safety": [],
-                                        "Performance": [],
-                                        "Installation": [],
-                                        "Other": []
-                                    }
-                                    
-                                    for req in requirements:
-                                        req_text = str(req)
-                                        if any(dim in req_text.lower() for dim in ["width", "height", "depth", "length"]):
-                                            req_categories["Dimensional"].append(req_text)
-                                        elif any(safety in req_text.lower() for safety in ["fire", "emergency", "safety"]):
-                                            req_categories["Safety"].append(req_text)
-                                        elif any(perf in req_text.lower() for perf in ["performance", "rating", "capacity"]):
-                                            req_categories["Performance"].append(req_text)
-                                        elif any(inst in req_text.lower() for inst in ["install", "mount", "position"]):
-                                            req_categories["Installation"].append(req_text)
-                                        else:
-                                            req_categories["Other"].append(req_text)
-                                    
-                                    # Display requirements by category
-                                    for category, reqs in req_categories.items():
-                                        if reqs:
-                                            st.write(f"**{category} Requirements:**")
-                                            for req in reqs:
-                                                st.write(f"- {req}")
-                                
-                                # Display related components if available
-                                if "related_components" in result:
-                                    st.write("🔗 **Related Components:**")
-                                    for related in result["related_components"]:
-                                        st.write(f"- {related}")
-                                
-                                # Display any numerical values found in the requirements
-                                numerical_values = []
-                                for req in requirements:
-                                    matches = re.findall(
-                                        r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
-                                        str(req).lower()
-                                    )
-                                    if matches:
-                                        for value, unit in matches:
-                                            numerical_values.append((value, unit, req))
-                                
-                                if numerical_values:
-                                    st.write("🔢 **Quantitative Requirements:**")
-                                    for value, unit, context in numerical_values:
-                                        st.write(f"- {value} {unit} ({context})")
-                                
-                        except Exception as e:
-                            st.warning(f"Error displaying component {component_name}: {str(e)}")
-                            continue
-                except Exception as e:
-                    st.warning(f"Error displaying component type {comp_type}: {str(e)}")
-                    continue
-                    
+            # Display results in a more direct format
+            for result in results:
+                # Create a visual separator
+                st.markdown("---")
+                
+                # Component Header with Type
+                st.markdown(f"### {result.get('component', 'Unknown Component')} ({result.get('type', 'General')})")
+                
+                # Description if available
+                if "description" in result:
+                    st.markdown("**📝 Description:**")
+                    st.markdown(result["description"])
+                
+                # Create three columns for better organization
+                col1, col2, col3 = st.columns([1, 1, 1])
+                
+                with col1:
+                    # Dimensions Section
+                    if "details" in result and result["details"].get("dimensions"):
+                        st.markdown("**📏 Dimensions**")
+                        for dim in result["details"]["dimensions"]:
+                            if isinstance(dim, dict):
+                                value = dim.get("value", "N/A")
+                                unit = dim.get("unit", "")
+                                dim_type = dim.get("type", "dimension").replace("_", " ").title()
+                                st.markdown(f"- {dim_type}: `{value} {unit}`")
+                
+                    # Materials Section
+                    if "details" in result and result["details"].get("materials"):
+                        st.markdown("\n**🧱 Materials**")
+                        for material in result["details"]["materials"]:
+                            if isinstance(material, dict):
+                                mat_name = material.get("name", "N/A")
+                                st.markdown(f"- {mat_name}")
+                
+                with col2:
+                    # Requirements Section
+                    if "details" in result and result["details"].get("requirements"):
+                        st.markdown("**📋 Requirements**")
+                        for req in result["details"]["requirements"]:
+                            if isinstance(req, dict):
+                                req_type = req.get("type", "general").upper()
+                                requirement = req.get("requirement", "")
+                                st.markdown(f"- [{req_type}] {requirement}")
+                
+                with col3:
+                    # Technical Specifications
+                    if "details" in result and result["details"].get("specifications"):
+                        st.markdown("**⚙️ Technical Specs**")
+                        for spec in result["details"]["specifications"]:
+                            if isinstance(spec, dict):
+                                value = spec.get("value", "N/A")
+                                unit = spec.get("unit", "")
+                                st.markdown(f"- `{value} {unit}`")
+                
+                # Quantities
+                if "quantity" in result:
+                    st.markdown("\n**📊 Quantity**")
+                    qty = result["quantity"]
+                    if isinstance(qty, dict):
+                        value = qty.get("value", "N/A")
+                        unit = qty.get("unit", "")
+                        st.markdown(f"- Amount: `{value} {unit}`")
+                
+                # Bottom section for context and source
+                st.markdown("**🔍 Location & Source Info**")
+                if "context" in result:
+                    st.markdown(f"- Location: `{result['context']}`")
+                if "path" in result:
+                    st.markdown(f"- Path: `{result['path']}`")
+                source = result.get("dataset", "Building Database")
+                st.markdown(f"- Source: `{source}`")
+
         except Exception as e:
             st.error(f"Error displaying results: {str(e)}")
 
