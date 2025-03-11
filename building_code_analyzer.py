@@ -446,30 +446,51 @@ class BuildingCodeAnalyzer:
     def search(self, term: str) -> List[Dict]:
         """Search for components and extract structured information."""
         results = []
+        query_terms = term.lower().split()
         
-        # First search in built-in data
-        for dataset_name, data in self.built_in_data.items():
-            try:
-                # Create a temporary analyzer for this dataset
-                temp_analyzer = BuildingCodeAnalyzer()
-                temp_analyzer._process_data(data)
+        for comp_key, comp_data in self.components.items():
+            should_include = False
+            
+            # Check component name and path
+            if any(term in comp_key.lower() for term in query_terms):
+                should_include = True
+            
+            # Check component type
+            if any(term in comp_data["type"].lower() for term in query_terms):
+                should_include = True
+            
+            # Check guidelines
+            if comp_key in self.guidelines:
+                guideline = self.guidelines[comp_key]
+                if any(term in str(guideline).lower() for term in query_terms):
+                    should_include = True
+            
+            # Check quantities
+            if comp_key in self.quantities:
+                quantity = self.quantities[comp_key]
+                if any(term in str(quantity).lower() for term in query_terms):
+                    should_include = True
+            
+            if should_include:
+                result = {
+                    "component": comp_key,
+                    "type": comp_data["type"],
+                    "details": {}
+                }
                 
-                # Search in this dataset
-                dataset_results = temp_analyzer._base_search(term)
+                # Add quantities if available
+                if "quantity" in comp_data:
+                    result["quantity"] = comp_data["quantity"]
                 
-                # Add dataset name to results
-                for result in dataset_results:
-                    result["dataset"] = dataset_name
-                    results.append(result)
-            except Exception as e:
-                st.warning(f"Error searching in dataset {dataset_name}: {str(e)}")
-                continue
-        
-        # Then search in uploaded data
-        if self.components:
-            uploaded_results = self._base_search(term)
-            for result in uploaded_results:
-                result["dataset"] = "uploaded"
+                # Add extracted information
+                for key in ["numerical_values", "requirements", "materials", "dimensions", "specifications"]:
+                    if key in comp_data and comp_data[key]:
+                        result["details"][key] = comp_data[key]
+                
+                # Add guideline description if available
+                if comp_key in self.guidelines:
+                    result["description"] = self.guidelines[comp_key]["description"]
+                
                 results.append(result)
         
         return results
@@ -706,7 +727,7 @@ class BuildingCodeAnalyzer:
         return results
 
     def display_results(self, results: List[Dict]):
-        """Display search results in a structured, easy-to-read format."""
+        """Display search results focusing on quantitative details."""
         if not results:
             st.warning("No matching components found.")
             return
@@ -727,46 +748,44 @@ class BuildingCodeAnalyzer:
             
             for result in type_results:
                 with st.expander(f"Component: {result['component']}"):
-                    # Display match context
-                    st.caption(f"Matched by: {', '.join(result['match_context'])}")
-                    
-                    # Display description if available
-                    if "description" in result:
-                        st.write("📝 **Description:**")
-                        st.write(result["description"])
-                    
-                    # Display details
+                    # Display quantitative information first
                     if "details" in result:
                         details = result["details"]
                         
-                        # Display dimensions
+                        # Display dimensions with numerical values
                         if "dimensions" in details and details["dimensions"]:
                             st.write("📏 **Dimensions:**")
                             for dim in details["dimensions"]:
                                 st.write(f"- {dim['value']} {dim['unit']}")
                         
-                        # Display specifications
+                        # Display specifications with numerical values
                         if "specifications" in details and details["specifications"]:
                             st.write("⚙️ **Specifications:**")
                             for spec in details["specifications"]:
                                 st.write(f"- {spec['value']} {spec['unit']}")
-                        
-                        # Display materials
-                        if "materials" in details and details["materials"]:
-                            st.write("🔨 **Materials:**")
-                            for material in details["materials"]:
-                                st.write(f"- {material}")
-                        
-                        # Display requirements
-                        if "requirements" in details and details["requirements"]:
-                            st.write("📋 **Requirements:**")
-                            for req in details["requirements"]:
-                                st.write(f"- {req}")
                     
-                    # Display quantity if available
+                    # Display direct quantities if available
                     if "quantity" in result:
                         st.write("🔢 **Quantity:**")
                         st.write(f"- {result['quantity']['value']} {result['quantity']['unit']}")
+                    
+                    # Display numerical values from requirements if they exist
+                    if "details" in result and "requirements" in result["details"]:
+                        requirements = result["details"]["requirements"]
+                        numerical_reqs = []
+                        for req in requirements:
+                            # Extract numerical values with units from requirements
+                            matches = re.findall(
+                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
+                                str(req).lower()
+                            )
+                            if matches:
+                                numerical_reqs.extend(matches)
+                        
+                        if numerical_reqs:
+                            st.write("📋 **Quantitative Requirements:**")
+                            for value, unit in numerical_reqs:
+                                st.write(f"- {value} {unit}")
 
 def main():
     try:
