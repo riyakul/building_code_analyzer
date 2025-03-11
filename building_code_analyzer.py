@@ -519,20 +519,68 @@ class BuildingCodeAnalyzer:
             "fire": ["fire", "flame", "burning", "sprinkler"]
         }
         
-        # Find matching component terms
-        target_components = []
-        for component, aliases in component_terms.items():
-            if any(term in query for term in aliases):
-                target_components.append(component)
+        # If no specific location is selected, include IFC database results
+        if not location:
+            # Search IFC database first
+            for ifc_code, data in self.ifc_database.items():
+                if any(term in query for term in component_terms.get("foundation", [])):
+                    if "Foundation" in data["name"] or any(term in data["description"].lower() for term in component_terms["foundation"]):
+                        results.append({
+                            "component": "Foundation",
+                            "type": "Structural",
+                            "location": "IFC Database",
+                            "value": data["description"],
+                            "path": f"IFC.{ifc_code}",
+                            "context": "IFC Standard Component",
+                            "numerical_values": [],
+                            "requirements": data["properties"].get("requirements", [])
+                        })
         
-        # If no specific components found, search all components
-        if not target_components:
-            target_components = list(component_terms.keys())
+        # Search through building codes
+        def search_dict(d: Dict, path: str = "", context: str = None) -> None:
+            if not isinstance(d, dict):
+                return
+                
+            for k, v in d.items():
+                k_lower = str(k).lower()
+                new_path = f"{path}.{k}" if path else k
+                new_context = k if context is None else f"{context} - {k}"
+                
+                # Check for foundation-related terms
+                if any(term in k_lower or (isinstance(v, str) and term in v.lower()) 
+                      for term in component_terms.get("foundation", [])):
+                    
+                    if isinstance(v, (str, int, float)):
+                        results.append({
+                            "component": k,
+                            "type": "Structural",
+                            "location": location or "Unknown Location",
+                            "value": str(v),
+                            "path": new_path,
+                            "context": new_context,
+                            "numerical_values": extract_numerical_values(str(v)),
+                            "requirements": []
+                        })
+                    elif isinstance(v, dict):
+                        # Handle nested requirements
+                        for req_k, req_v in v.items():
+                            if isinstance(req_v, (str, int, float)):
+                                results.append({
+                                    "component": k,
+                                    "type": "Structural",
+                                    "location": location or "Unknown Location",
+                                    "requirement": req_k,
+                                    "value": str(req_v),
+                                    "path": f"{new_path}.{req_k}",
+                                    "context": f"{new_context} - {req_k}",
+                                    "numerical_values": extract_numerical_values(str(req_v)),
+                                    "requirements": []
+                                })
+                
+                # Continue searching nested structures
+                search_dict(v, new_path, new_context)
         
-        # If location is specified, only search that location
-        locations_to_search = [location] if location else self.building_codes.keys()
-        
-        def extract_numerical_values(text):
+        def extract_numerical_values(text: str) -> List[tuple]:
             """Extract numerical values with units from text."""
             if not isinstance(text, str):
                 return []
@@ -541,90 +589,17 @@ class BuildingCodeAnalyzer:
                 text.lower()
             )
         
-        def search_dict(d, path="", context=None):
-            """Recursively search through dictionary."""
-            if isinstance(d, dict):
-                for k, v in d.items():
-                    k_lower = str(k).lower()
-                    new_path = f"{path}.{k}" if path else k
-                    new_context = k if context is None else f"{context} - {k}"
-                    
-                    # Check if this key or value contains any of our target terms
-                    matched_component = None
-                    for comp in target_components:
-                        if any(alias in k_lower or (isinstance(v, str) and alias in str(v).lower()) 
-                              for alias in component_terms[comp]):
-                            matched_component = comp
-                            break
-                    
-                    if matched_component:
-                        # Extract information based on value type
-                        if isinstance(v, (str, int, float)):
-                            # Direct value
-                            result = {
-                                "component": k,
-                                "path": new_path,
-                                "context": new_context,
-                                "value": str(v),
-                                "numerical_values": extract_numerical_values(str(v)),
-                                "type": "requirement"
-                            }
-                            results.append(result)
-                        elif isinstance(v, dict):
-                            # Process nested dictionary
-                            for sub_k, sub_v in v.items():
-                                if isinstance(sub_v, (str, int, float)):
-                                    result = {
-                                        "component": k,
-                                        "requirement": sub_k,
-                                        "path": f"{new_path}.{sub_k}",
-                                        "context": f"{new_context} - {sub_k}",
-                                        "value": str(sub_v),
-                                        "numerical_values": extract_numerical_values(str(sub_v)),
-                                        "type": "specification"
-                                    }
-                                    results.append(result)
-                                elif isinstance(sub_v, dict):
-                                    # Handle deeply nested requirements
-                                    for req_k, req_v in sub_v.items():
-                                        if isinstance(req_v, (str, int, float)):
-                                            result = {
-                                                "component": k,
-                                                "requirement": f"{sub_k} - {req_k}",
-                                                "path": f"{new_path}.{sub_k}.{req_k}",
-                                                "context": f"{new_context} - {sub_k} - {req_k}",
-                                                "value": str(req_v),
-                                                "numerical_values": extract_numerical_values(str(req_v)),
-                                                "type": "specification"
-                                            }
-                                            results.append(result)
-                    
-                    # Continue searching nested structures
-                    search_dict(v, new_path, new_context)
-                    
-            elif isinstance(d, list):
-                for i, item in enumerate(d):
-                    search_dict(item, f"{path}[{i}]", context)
-        
         # Search through each location's building codes
-        for loc in locations_to_search:
-            if loc not in self.building_codes:
-                continue
-            
-            code_data = self.building_codes[loc]
-            search_dict(code_data)
-            
-            # Add location to results
-            for result in results:
-                result["location"] = loc
-        
-        # If no results found in building codes, search IFC database
-        if not results:
-            ifc_results = self.search_ifc_database(query)
-            if ifc_results:
-                for result in ifc_results:
-                    result["location"] = "IFC Database"
-                    results.extend(ifc_results)
+        if location:
+            if location in self.building_codes:
+                search_dict(self.building_codes[location])
+        else:
+            for loc, code_data in self.building_codes.items():
+                search_dict(code_data)
+                # Update location in results
+                for result in results:
+                    if result["location"] == "Unknown Location":
+                        result["location"] = loc
         
         return results
 
@@ -684,11 +659,13 @@ class BuildingCodeAnalyzer:
         return results
 
     def display_results(self, results: List[Dict]):
-        """Display search results in a clear, organized format."""
+        """Display search results in a structured, easy-to-read format."""
         if not results:
-            st.warning("No matching requirements found. Try broadening your search or using different terms.")
+            st.warning("No matching components found.")
             return
-            
+
+        st.write(f"Found {len(results)} matching requirements:")
+        
         # Group results by location
         results_by_location = {}
         for result in results:
@@ -696,96 +673,61 @@ class BuildingCodeAnalyzer:
             if location not in results_by_location:
                 results_by_location[location] = []
             results_by_location[location].append(result)
-            
-        # Display results for each location
-        for location, location_results in results_by_location.items():
-            with st.expander(f"{location} ({len(location_results)} results)", expanded=True):
-                # Group by component
-                results_by_component = {}
-                for result in location_results:
-                    component = result.get("component", "Unknown Component")
-                    if component not in results_by_component:
-                        results_by_component[component] = []
-                    results_by_component[component].append(result)
-                
-                # Display each component's requirements
-                for component, component_results in results_by_component.items():
-                    st.subheader(f"{component}")
-                    
-                    # Create two columns for better layout
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        # Display specifications
-                        specs = [r for r in component_results if r.get("type") == "specification"]
-                        if specs:
-                            st.markdown("**Specifications:**")
-                            for spec in specs:
-                                with st.container():
-                                    st.markdown(f"- **{spec.get('requirement', '')}**")
-                                    if spec.get("numerical_values"):
-                                        st.markdown("  - Values: " + ", ".join(
-                                            f"{value} {unit}" for value, unit in spec["numerical_values"]
-                                        ))
-                                    st.markdown(f"  - {spec.get('value', '')}")
-                    
-                    with col2:
-                        # Display requirements
-                        reqs = [r for r in component_results if r.get("type") == "requirement"]
-                        if reqs:
-                            st.markdown("**Requirements:**")
-                            for req in reqs:
-                                with st.container():
-                                    if req.get("numerical_values"):
-                                        st.markdown("- Values: " + ", ".join(
-                                            f"{value} {unit}" for value, unit in req["numerical_values"]
-                                        ))
-                                    st.markdown(f"- {req.get('value', '')}")
-                    
-                    # Display context/path for debugging if needed
-                    with st.expander("Show Details", expanded=False):
-                        for result in component_results:
-                            st.text(f"Path: {result.get('path', '')}")
-                            st.text(f"Context: {result.get('context', '')}")
-                            st.markdown("---")
         
-        # Add export options
-        if results:
-            st.markdown("---")
-            col1, col2 = st.columns(2)
+        # Display results organized by location
+        for location, location_results in results_by_location.items():
+            st.subheader(f"📍 {location}")
             
-            with col1:
-                # Export as CSV
-                csv_data = []
-                for result in results:
-                    csv_data.append({
-                        "Location": result.get("location", ""),
-                        "Component": result.get("component", ""),
-                        "Type": result.get("type", ""),
-                        "Requirement": result.get("requirement", ""),
-                        "Value": result.get("value", ""),
-                        "Path": result.get("path", ""),
-                        "Context": result.get("context", "")
-                    })
-                csv = pd.DataFrame(csv_data).to_csv(index=False)
-                st.download_button(
-                    "Download Results (CSV)",
-                    csv,
-                    "building_code_results.csv",
-                    "text/csv",
-                    key="download-csv"
-                )
+            # Group by component
+            results_by_component = {}
+            for result in location_results:
+                component = result["component"]
+                if component not in results_by_component:
+                    results_by_component[component] = []
+                results_by_component[component].append(result)
             
-            with col2:
-                # Export as JSON
-                json_str = json.dumps(results, indent=2)
-                st.download_button(
-                    "Download Results (JSON)",
-                    json_str,
-                    "building_code_results.json",
-                    "application/json",
-                    key="download-json"
-                )
+            for component, component_results in results_by_component.items():
+                with st.expander(f"Component: {component}"):
+                    # Display description first (if from IFC database)
+                    for result in component_results:
+                        if "description" in result:
+                            st.write("📝 **Description:**")
+                            st.write(result["description"])
+                            break
+                    
+                    # Display numerical values
+                    numerical_values = []
+                    for result in component_results:
+                        if "numerical_values" in result:
+                            numerical_values.extend([
+                                {"value": float(value), "unit": unit, "context": result["context"]}
+                                for value, unit in result["numerical_values"]
+                            ])
+                    
+                    if numerical_values:
+                        st.write("📏 **Specifications:**")
+                        for spec in numerical_values:
+                            st.write(f"- {spec['value']} {spec['unit']} ({spec['context']})")
+                    
+                    # Display requirements
+                    requirements = []
+                    for result in component_results:
+                        if "requirement" in result:
+                            requirements.append(f"- {result['requirement']}: {result['value']}")
+                        elif "requirements" in result and result["requirements"]:
+                            requirements.extend([f"- {req}" for req in result["requirements"]])
+                        elif "value" in result and isinstance(result["value"], str):
+                            requirements.append(f"- {result['value']}")
+                    
+                    if requirements:
+                        st.write("📋 **Requirements:**")
+                        for req in requirements:
+                            st.write(req)
+                    
+                    # Show reference paths
+                    with st.expander("🔗 Reference Paths"):
+                        for result in component_results:
+                            st.code(result["path"])
 
 def main():
     try:
