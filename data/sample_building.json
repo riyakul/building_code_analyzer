@@ -1,0 +1,71 @@
+{
+    "structural": {
+        "foundation": {
+            "type": "strip_footing",
+            "depth": 1.2,
+            "width": 0.6,
+            "material": "reinforced concrete",
+            "description": "Strip footing foundation with minimum depth of 1.2m and width of 0.6m. Must be constructed with reinforced concrete having minimum strength of 25 MPa."
+        },
+        "walls": {
+            "external": {
+                "thickness": 0.23,
+                "height": 3.0,
+                "material": "brick",
+                "description": "External walls must be constructed with double-brick cavity wall construction. Minimum thickness of 230mm including cavity. Must achieve minimum fire rating of 60 minutes."
+            },
+            "internal": {
+                "thickness": 0.115,
+                "height": 2.7,
+                "material": "brick",
+                "description": "Internal load-bearing walls to be minimum 115mm thick brick construction. Non-load bearing walls may be lightweight construction."
+            }
+        },
+        "beams": {
+            "main": {
+                "depth": 0.4,
+                "width": 0.3,
+                "material": "reinforced concrete",
+                "description": "Main structural beams to be reinforced concrete with minimum depth of 400mm. Must be designed for imposed loads according to building use."
+            }
+        }
+    },
+    "services": {
+        "electrical": {
+            "main_supply": {
+                "rating": 100,
+                "unit": "A",
+                "description": "Main electrical supply to be 3-phase 100A. Must include main circuit breaker and surge protection."
+            },
+            "lighting": {
+                "min_lux": 300,
+                "description": "Lighting to achieve minimum 300 lux at working plane. Emergency lighting required in corridors and exits."
+            }
+        },
+        "plumbing": {
+            "water_supply": {
+                "pressure": 350,
+                "unit": "kPa",
+                "description": "Water supply to maintain minimum 350 kPa pressure. Hot water system must be solar with electric backup."
+            }
+        }
+    },
+    "spaces": {
+        "rooms": {
+            "bedroom": {
+                "min_area": 9.0,
+                "min_width": 2.4,
+                "description": "Bedrooms must have minimum floor area of 9.0 m² and minimum width of 2.4m. Natural ventilation required with openable windows."
+            },
+            "bathroom": {
+                "min_area": 3.0,
+                "waterproof": true,
+                "description": "Bathrooms to be fully waterproofed with minimum floor area of 3.0 m². Mechanical ventilation required if no external window."
+            }
+        },
+        "corridors": {
+            "min_width": 1.0,
+            "description": "Corridors to have minimum clear width of 1.0m. Fire escape routes require minimum 1.2m width."
+        }
+    }
+} 
