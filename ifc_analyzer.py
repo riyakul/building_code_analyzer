@@ -12,42 +12,90 @@ from nltk.tokenize import word_tokenize
 from nltk.corpus import stopwords
 import os
 
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-except LookupError:
-    nltk.download('punkt')
-try:
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('stopwords')
+# Download required NLTK data with error handling
+def download_nltk_data():
+    try:
+        nltk.data.find('tokenizers/punkt')
+    except LookupError:
+        try:
+            nltk.download('punkt', quiet=True)
+        except Exception as e:
+            st.error(f"Error downloading NLTK punkt: {str(e)}")
+            
+    try:
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        try:
+            nltk.download('stopwords', quiet=True)
+        except Exception as e:
+            st.error(f"Error downloading NLTK stopwords: {str(e)}")
+
+# Download NLTK data at startup
+download_nltk_data()
 
 class IFCAnalyzer:
     def __init__(self):
+        self.locations = {
+            "California": {
+                "code_version": "2022 California Building Code",
+                "jurisdiction": "California Building Standards Commission",
+                "units": "imperial"
+            },
+            "New York": {
+                "code_version": "2022 NYC Building Code",
+                "jurisdiction": "NYC Department of Buildings",
+                "units": "imperial"
+            },
+            "Texas": {
+                "code_version": "2021 International Building Code with Texas Amendments",
+                "jurisdiction": "Texas Department of Licensing and Regulation",
+                "units": "imperial"
+            },
+            "International": {
+                "code_version": "2021 International Building Code",
+                "jurisdiction": "International Code Council",
+                "units": "metric"
+            }
+        }
+        
+        self.current_location = "California"
+        # Extended IFC schema with more components and their requirements
         self.ifc_schema = {
             "IfcWall": {
                 "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Height", "Width", "Length", "Material"],
+                "properties": ["Height", "Width", "Length", "Material", "FireRating", "LoadBearing", "Insulation"],
                 "quantities": ["GrossFootprintArea", "NetVolume", "GrossVolume"],
-                "relationships": ["ContainedInStructure", "HasOpenings"]
+                "relationships": ["ContainedInStructure", "HasOpenings"],
+                "requirements": {
+                    "FireRating": "Minimum 2 hours for load-bearing walls",
+                    "Insulation": "R-value minimum 13 for exterior walls",
+                    "Height": "Maximum height between supports: 20 feet",
+                    "Thickness": "Minimum 4 inches for load-bearing walls"
+                }
             },
-            "IfcBeam": {
+            "IfcStandpipe": {
                 "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Span", "Depth", "Width", "Material", "LoadBearing"],
-                "quantities": ["Length", "CrossSectionArea", "NetWeight"],
-                "relationships": ["ContainedInStructure"]
+                "properties": ["Diameter", "Material", "PressureRating", "FlowRate"],
+                "quantities": ["Length", "Weight"],
+                "relationships": ["ServesFloor", "ConnectedTo"],
+                "requirements": {
+                    "Diameter": "Minimum 4 inches for Class I and III systems",
+                    "PressureRating": "Minimum working pressure 175 psi",
+                    "FlowRate": "Minimum 500 GPM for first standpipe, 250 GPM for each additional",
+                    "Spacing": "Maximum 200 feet between standpipes"
+                }
             },
-            "IfcColumn": {
+            "IfcDoor": {
                 "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Height", "Width", "Depth", "Material", "LoadBearing"],
-                "quantities": ["Length", "CrossSectionArea", "NetWeight"],
-                "relationships": ["ContainedInStructure"]
-            },
-            "IfcSlab": {
-                "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Thickness", "Material", "LoadBearing", "FireRating"],
-                "quantities": ["GrossArea", "NetArea", "GrossVolume"],
-                "relationships": ["ContainedInStructure", "HasOpenings"]
+                "properties": ["Height", "Width", "FireRating", "AccessibilityCompliant"],
+                "quantities": ["Area"],
+                "relationships": ["ContainedInStructure", "FillsOpening"],
+                "requirements": {
+                    "Width": "Minimum 32 inches clear width",
+                    "Height": "Minimum 80 inches",
+                    "FireRating": "90 minutes for exit enclosures",
+                    "Threshold": "Maximum 0.5 inches height"
+                }
             }
         }
         
@@ -57,15 +105,48 @@ class IFCAnalyzer:
             "Length": "mm",
             "Depth": "mm",
             "Thickness": "mm",
+            "Diameter": "mm",
             "Area": "m²",
             "Volume": "m³",
             "Weight": "kg",
+            "PressureRating": "psi",
+            "FlowRate": "gpm",
             "LoadBearing": "boolean",
             "FireRating": "hours"
         }
         
         self.current_file = None
         self.extracted_data = {}
+        self.user_data = {}  # Store uploaded JSON data separately
+        
+    def set_location(self, location: str) -> bool:
+        """Set the current location for building code requirements."""
+        if location in self.locations:
+            self.current_location = location
+            return True
+        return False
+
+    def get_location_info(self) -> Dict:
+        """Get information about the current location's building codes."""
+        return self.locations.get(self.current_location, {})
+
+    def convert_units(self, value: float, from_unit: str, to_unit: str) -> float:
+        """Convert measurements between metric and imperial units."""
+        conversions = {
+            "mm_to_inches": lambda x: x / 25.4,
+            "inches_to_mm": lambda x: x * 25.4,
+            "m2_to_sqft": lambda x: x * 10.764,
+            "sqft_to_m2": lambda x: x / 10.764,
+            "m3_to_cuft": lambda x: x * 35.315,
+            "cuft_to_m3": lambda x: x / 35.315,
+            "kg_to_lbs": lambda x: x * 2.205,
+            "lbs_to_kg": lambda x: x / 2.205
+        }
+        
+        conversion_key = f"{from_unit}_to_{to_unit}"
+        if conversion_key in conversions:
+            return conversions[conversion_key](value)
+        return value
         
     def load_file(self, file_data, file_type: str) -> bool:
         """Load and process uploaded file data."""
@@ -151,69 +232,65 @@ class IFCAnalyzer:
     def process_json_file(self) -> bool:
         """Process loaded JSON file and extract relevant information."""
         try:
-            self.extracted_data = self.current_file
-            return len(self.extracted_data) > 0
+            if isinstance(self.current_file, dict):
+                self.user_data = self.current_file
+                return True
+            return False
         except Exception as e:
             st.error(f"Error processing JSON file: {str(e)}")
             return False
     
     def search(self, query: str) -> List[Dict]:
-        """Search through extracted data based on natural language query."""
+        """Search through both IFC schema and uploaded data based on natural language query."""
         try:
             results = []
-            if not query or not self.extracted_data:
-                return results
             
             # Clean and process query
             query = query.lower()
-            tokens = word_tokenize(query)
-            stop_words = set(stopwords.words('english'))
-            tokens = [w for w in tokens if w not in stop_words]
+            try:
+                tokens = word_tokenize(query)
+                stop_words = set(stopwords.words('english'))
+                tokens = [w for w in tokens if w not in stop_words]
+            except LookupError:
+                tokens = query.split()
+                stop_words = {'a', 'an', 'the', 'in', 'on', 'at', 'for', 'to', 'of', 'with', 'by'}
+                tokens = [w for w in tokens if w not in stop_words]
             
             # Extract key terms
-            component_terms = ["wall", "beam", "column", "slab", "foundation"]
-            property_terms = ["height", "width", "length", "depth", "thickness", "material"]
-            quantity_terms = ["area", "volume", "weight"]
+            component_terms = sum([[k.lower(), k[3:].lower()] for k in self.ifc_schema.keys()], [])
+            property_terms = list(set(sum([schema["properties"] for schema in self.ifc_schema.values()], [])))
+            property_terms = [p.lower() for p in property_terms]
             
-            # Identify search focus
-            search_components = [term for term in tokens if term in component_terms]
-            search_properties = [term for term in tokens if term in property_terms]
-            search_quantities = [term for term in tokens if term in quantity_terms]
+            # Search in IFC schema
+            for component_type, schema in self.ifc_schema.items():
+                component_name = component_type[3:].lower()  # Remove 'Ifc' prefix
+                if any(term in component_name for term in tokens):
+                    result = {
+                        "type": component_type,
+                        "name": f"Standard {component_name}",
+                        "properties": {},
+                        "requirements": schema.get("requirements", {}),
+                        "source": "Building Code"
+                    }
+                    
+                    # Add relevant properties based on query
+                    for prop in schema["properties"]:
+                        if prop.lower() in query or "dimension" in query:
+                            result["properties"][prop] = f"See requirements: {schema['requirements'].get(prop, 'No specific requirement')}"
+                    
+                    results.append(result)
             
-            # Search through extracted data
-            for entity_type, entities in self.extracted_data.items():
-                if not search_components or any(comp in entity_type.lower() for comp in search_components):
-                    for entity in entities:
-                        should_include = True
-                        
-                        # Check properties
-                        if search_properties:
-                            has_property = False
-                            for prop in search_properties:
-                                if any(prop in key.lower() for key in entity["Properties"].keys()):
-                                    has_property = True
-                                    break
-                            should_include = should_include and has_property
-                        
-                        # Check quantities
-                        if search_quantities:
-                            has_quantity = False
-                            for qty in search_quantities:
-                                if any(qty in key.lower() for key in entity["Quantities"].keys()):
-                                    has_quantity = True
-                                    break
-                            should_include = should_include and has_quantity
-                        
-                        if should_include:
-                            result = {
-                                "type": entity_type,
-                                "id": entity.get("GlobalId", "Unknown"),
-                                "name": entity.get("Name", "Unnamed"),
-                                "properties": entity["Properties"],
-                                "quantities": entity["Quantities"],
-                                "relationships": entity["Relationships"]
-                            }
-                            results.append(result)
+            # Search in uploaded JSON data
+            if self.user_data:
+                for key, value in self.user_data.items():
+                    if isinstance(value, dict) and any(term in key.lower() for term in tokens):
+                        result = {
+                            "type": "UserComponent",
+                            "name": key,
+                            "properties": value,
+                            "source": "Uploaded Data"
+                        }
+                        results.append(result)
             
             return results
         except Exception as e:
@@ -246,12 +323,37 @@ def main():
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = IFCAnalyzer()
     
-    # File upload section
+    # Sidebar
+    st.sidebar.header("Settings")
+    
+    # Location selector
+    location = st.sidebar.selectbox(
+        "Select Location",
+        options=list(st.session_state.analyzer.locations.keys()),
+        index=list(st.session_state.analyzer.locations.keys()).index(st.session_state.analyzer.current_location)
+    )
+    
+    # Update location if changed
+    if location != st.session_state.analyzer.current_location:
+        if st.session_state.analyzer.set_location(location):
+            st.sidebar.success(f"Location updated to {location}")
+            
+    # Display current building code information
+    location_info = st.session_state.analyzer.get_location_info()
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Building Code Information")
+    st.sidebar.write(f"**Version:** {location_info['code_version']}")
+    st.sidebar.write(f"**Jurisdiction:** {location_info['jurisdiction']}")
+    st.sidebar.write(f"**Units:** {location_info['units'].title()}")
+    
+    st.sidebar.markdown("---")
     st.sidebar.header("Upload Files")
+    
+    # File upload section
     uploaded_file = st.sidebar.file_uploader(
-        "Upload IFC or JSON file",
-        type=["ifc", "json"],
-        help="Upload an IFC file or JSON file containing building component data"
+        "Upload JSON file with additional specifications",
+        type=["json"],
+        help="Upload a JSON file containing additional building component data"
     )
     
     if uploaded_file is not None:
@@ -267,10 +369,10 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Search Components")
+        st.subheader("Search Building Components")
         search_query = st.text_input(
             "Enter your search query",
-            placeholder="e.g., show me walls with height greater than 3m"
+            placeholder="e.g., show me standpipe dimensions, wall requirements, door specifications"
         )
         
         if st.button("Search", type="primary"):
@@ -279,60 +381,63 @@ def main():
                     results = st.session_state.analyzer.search(search_query)
                     if results:
                         st.write(f"Found {len(results)} matching components:")
-                        for result in results:
-                            with st.expander(f"{result['type']}: {result['name']}"):
-                                # Properties
-                                if result['properties']:
-                                    st.write("**Properties:**")
-                                    props_df = pd.DataFrame(
-                                        [(k, v, st.session_state.analyzer.property_units.get(k, "-")) 
-                                         for k, v in result['properties'].items()],
-                                        columns=["Property", "Value", "Unit"]
-                                    )
-                                    st.table(props_df)
-                                
-                                # Quantities
-                                if result['quantities']:
-                                    st.write("**Quantities:**")
-                                    qty_df = pd.DataFrame(
-                                        [(k, v, st.session_state.analyzer.property_units.get(k, "-")) 
-                                         for k, v in result['quantities'].items()],
-                                        columns=["Quantity", "Value", "Unit"]
-                                    )
-                                    st.table(qty_df)
-                                
-                                # Relationships
-                                if result['relationships']:
-                                    st.write("**Relationships:**")
-                                    for rel in result['relationships']:
-                                        st.write(f"- {rel['type']}: {rel['related_object']} ({rel['related_name']})")
+                        
+                        # Group results by source
+                        code_results = [r for r in results if r['source'] == 'Building Code']
+                        user_results = [r for r in results if r['source'] == 'Uploaded Data']
+                        
+                        # Display building code requirements
+                        if code_results:
+                            st.subheader("Building Code Requirements")
+                            for result in code_results:
+                                with st.expander(f"{result['name']} Requirements"):
+                                    # Display requirements
+                                    if result.get('requirements'):
+                                        st.write("**Code Requirements:**")
+                                        for req_name, req_value in result['requirements'].items():
+                                            st.write(f"- **{req_name}:** {req_value}")
+                                    
+                                    # Display properties if any
+                                    if result.get('properties'):
+                                        st.write("\n**Properties:**")
+                                        props_df = pd.DataFrame(
+                                            [(k, v) for k, v in result['properties'].items()],
+                                            columns=["Property", "Requirement"]
+                                        )
+                                        st.table(props_df)
+                        
+                        # Display user-uploaded data
+                        if user_results:
+                            st.subheader("Additional Specifications (from uploaded data)")
+                            for result in user_results:
+                                with st.expander(f"{result['name']} Specifications"):
+                                    if isinstance(result['properties'], dict):
+                                        props_df = pd.DataFrame(
+                                            [(k, v) for k, v in result['properties'].items()],
+                                            columns=["Property", "Value"]
+                                        )
+                                        st.table(props_df)
                     else:
                         st.warning("No matching components found.")
             else:
                 st.warning("Please enter a search query")
     
     with col2:
-        st.subheader("Component Templates")
-        component_type = st.selectbox(
-            "Select component type",
-            options=list(st.session_state.analyzer.ifc_schema.keys())
-        )
+        st.subheader("Available Components")
+        st.write("The following components can be searched:")
         
-        if component_type:
-            template = st.session_state.analyzer.get_component_template(component_type)
-            if template:
-                st.write("**Required Properties:**")
-                props_df = pd.DataFrame(
-                    [(prop, template['units'][prop]) for prop in template['required_properties']],
-                    columns=["Property", "Unit"]
-                )
-                st.table(props_df)
+        for component_type in st.session_state.analyzer.ifc_schema.keys():
+            component_name = component_type[3:]  # Remove 'Ifc' prefix
+            with st.expander(component_name):
+                schema = st.session_state.analyzer.ifc_schema[component_type]
                 
-                st.write("**Required Quantities:**")
-                st.write(", ".join(template['required_quantities']))
+                st.write("**Properties:**")
+                st.write(", ".join(schema['properties']))
                 
-                st.write("**Possible Relationships:**")
-                st.write(", ".join(template['relationships']))
+                if schema.get('requirements'):
+                    st.write("\n**Requirements:**")
+                    for req_name, req_value in schema['requirements'].items():
+                        st.write(f"- **{req_name}:** {req_value}")
 
 if __name__ == "__main__":
     main() 

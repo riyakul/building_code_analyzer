@@ -4,4 +4,4 @@ numpy>=1.24.3
 ifcopenshell>=0.7.0
 plotly>=5.13.1
 scikit-learn>=1.2.2
-nltk>=3.8.1 
+nltk>=3.8.1
