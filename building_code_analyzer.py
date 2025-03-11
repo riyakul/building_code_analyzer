@@ -503,6 +503,7 @@ class BuildingCodeAnalyzer:
         
         # Expand search terms to include related terms
         component_terms = {
+            "foundation": ["foundation", "footing", "base", "substructure"],
             "standpipe": ["standpipe", "stand pipe", "riser", "fire protection"],
             "door": ["door", "doorway", "entrance"],
             "window": ["window", "glazing", "opening"],
@@ -518,30 +519,15 @@ class BuildingCodeAnalyzer:
             "fire": ["fire", "flame", "burning", "sprinkler"]
         }
         
-        requirement_terms = {
-            "dimension": ["height", "width", "depth", "length", "size", "dimension", "distance", "clearance", "spacing"],
-            "rating": ["rating", "classification", "grade", "class"],
-            "material": ["material", "composition", "made of", "constructed of"],
-            "installation": ["install", "mount", "place", "position", "locate"],
-            "minimum": ["minimum", "min", "at least", "not less than"],
-            "maximum": ["maximum", "max", "not more than", "up to"]
-        }
-        
         # Find matching component terms
         target_components = []
         for component, aliases in component_terms.items():
             if any(term in query for term in aliases):
                 target_components.append(component)
         
-        # Find matching requirement types
-        target_requirements = []
-        for req_type, aliases in requirement_terms.items():
-            if any(term in query for term in aliases):
-                target_requirements.append(req_type)
-        
-        # If no specific requirements found, search for all requirements
-        if not target_requirements:
-            target_requirements = list(requirement_terms.keys())
+        # If no specific components found, search all components
+        if not target_components:
+            target_components = list(component_terms.keys())
         
         # If location is specified, only search that location
         locations_to_search = [location] if location else self.building_codes.keys()
@@ -566,7 +552,7 @@ class BuildingCodeAnalyzer:
                     # Check if this key or value contains any of our target terms
                     matched_component = None
                     for comp in target_components:
-                        if any(alias in k_lower or (isinstance(v, str) and alias in v.lower()) 
+                        if any(alias in k_lower or (isinstance(v, str) and alias in str(v).lower()) 
                               for alias in component_terms[comp]):
                             matched_component = comp
                             break
@@ -585,7 +571,7 @@ class BuildingCodeAnalyzer:
                             }
                             results.append(result)
                         elif isinstance(v, dict):
-                            # Nested requirements
+                            # Process nested dictionary
                             for sub_k, sub_v in v.items():
                                 if isinstance(sub_v, (str, int, float)):
                                     result = {
@@ -598,6 +584,20 @@ class BuildingCodeAnalyzer:
                                         "type": "specification"
                                     }
                                     results.append(result)
+                                elif isinstance(sub_v, dict):
+                                    # Handle deeply nested requirements
+                                    for req_k, req_v in sub_v.items():
+                                        if isinstance(req_v, (str, int, float)):
+                                            result = {
+                                                "component": k,
+                                                "requirement": f"{sub_k} - {req_k}",
+                                                "path": f"{new_path}.{sub_k}.{req_k}",
+                                                "context": f"{new_context} - {sub_k} - {req_k}",
+                                                "value": str(req_v),
+                                                "numerical_values": extract_numerical_values(str(req_v)),
+                                                "type": "specification"
+                                            }
+                                            results.append(result)
                     
                     # Continue searching nested structures
                     search_dict(v, new_path, new_context)
@@ -617,6 +617,14 @@ class BuildingCodeAnalyzer:
             # Add location to results
             for result in results:
                 result["location"] = loc
+        
+        # If no results found in building codes, search IFC database
+        if not results:
+            ifc_results = self.search_ifc_database(query)
+            if ifc_results:
+                for result in ifc_results:
+                    result["location"] = "IFC Database"
+                    results.extend(ifc_results)
         
         return results
 
@@ -675,147 +683,109 @@ class BuildingCodeAnalyzer:
         
         return results
 
-def export_results(results: List[Dict], format: str) -> Optional[tuple]:
-    """Export results to CSV or JSON format."""
-    if not results:
-        return None
-    
-    if format == "CSV":
-        output = io.StringIO()
-        writer = csv.writer(output)
-        # Write headers
-        headers = ["Component", "Type", "Quantity", "Unit", "Guidelines", "Specifications"]
-        writer.writerow(headers)
-        
-        # Write data
+    def display_results(self, results: List[Dict]):
+        """Display search results in a clear, organized format."""
+        if not results:
+            st.warning("No matching requirements found. Try broadening your search or using different terms.")
+            return
+            
+        # Group results by location
+        results_by_location = {}
         for result in results:
-            row = [
-                result["component"],
-                result["type"],
-                result.get("quantity", {}).get("value", ""),
-                result.get("quantity", {}).get("unit", ""),
-                result.get("guidelines", ""),
-                ", ".join([f"{s['value']} {s['unit']}" for s in result.get("specifications", [])])
-            ]
-            writer.writerow(row)
-        
-        return output.getvalue(), "text/csv"
-    
-    elif format == "JSON":
-        return json.dumps(results, indent=2), "application/json"
-    
-    return None
-
-def display_results(results: List[Dict]):
-    """Display search results in a structured, easy-to-read format."""
-    if not results:
-        st.warning("No matching components found.")
-        return
-
-    st.write(f"Found {len(results)} matching requirements:")
-    
-    # Group results by location and component
-    results_by_location = {}
-    for result in results:
-        location = result.get("location", "Unknown Location")
-        if location not in results_by_location:
-            results_by_location[location] = {}
+            location = result.get("location", "Unknown Location")
+            if location not in results_by_location:
+                results_by_location[location] = []
+            results_by_location[location].append(result)
             
-        component = result["component"]
-        if component not in results_by_location[location]:
-            results_by_location[location][component] = []
-            
-        results_by_location[location][component].append(result)
-    
-    # Display results organized by location and component
-    for location, components in results_by_location.items():
-        st.subheader(f"📍 {location}")
-        
-        for component, component_results in components.items():
-            with st.expander(f"Component: {component}"):
-                # Organize results by type
-                requirements = []
-                specifications = []
-                numerical_values = []
+        # Display results for each location
+        for location, location_results in results_by_location.items():
+            with st.expander(f"{location} ({len(location_results)} results)", expanded=True):
+                # Group by component
+                results_by_component = {}
+                for result in location_results:
+                    component = result.get("component", "Unknown Component")
+                    if component not in results_by_component:
+                        results_by_component[component] = []
+                    results_by_component[component].append(result)
                 
-                for result in component_results:
-                    # Extract numerical values
-                    if "numerical_values" in result:
-                        for value, unit in result["numerical_values"]:
-                            numerical_values.append({
-                                "value": float(value),
-                                "unit": unit,
-                                "context": result["context"]
-                            })
+                # Display each component's requirements
+                for component, component_results in results_by_component.items():
+                    st.subheader(f"{component}")
                     
-                    # Categorize result by type
-                    if result["type"] == "requirement":
-                        requirements.append(result)
-                    else:
-                        specifications.append(result)
-                
-                # Display numerical values first
-                if numerical_values:
-                    st.write("📏 **Numerical Specifications:**")
-                    for spec in numerical_values:
-                        st.write(f"- {spec['value']} {spec['unit']} ({spec['context']})")
-                
-                # Display requirements
-                if requirements:
-                    st.write("📋 **Requirements:**")
-                    for req in requirements:
-                        st.write(f"- {req['value']}")
-                        st.caption(f"  Context: {req['context']}")
-                
-                # Display specifications
-                if specifications:
-                    st.write("🔍 **Detailed Specifications:**")
-                    for spec in specifications:
-                        st.write(f"- {spec['requirement']}: {spec['value']}")
-                        st.caption(f"  Context: {spec['context']}")
-                
-                # Add path information for reference
-                with st.expander("🔗 Reference Paths"):
-                    for result in component_results:
-                        st.code(result["path"])
-    
-    # Add export options
-    st.markdown("---")
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.write("Export results for further analysis:")
-    with col2:
-        if st.button("Export to CSV"):
-            # Create DataFrame for export
-            export_data = []
-            for location, components in results_by_location.items():
-                for component, component_results in components.items():
-                    for result in component_results:
-                        row = {
-                            "Location": location,
-                            "Component": component,
-                            "Type": result["type"],
-                            "Value": result["value"],
-                            "Context": result["context"],
-                            "Path": result["path"]
-                        }
-                        if "requirement" in result:
-                            row["Requirement"] = result["requirement"]
-                        if "numerical_values" in result:
-                            for value, unit in result["numerical_values"]:
-                                row["Numerical Value"] = value
-                                row["Unit"] = unit
-                        export_data.append(row)
+                    # Create two columns for better layout
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        # Display specifications
+                        specs = [r for r in component_results if r.get("type") == "specification"]
+                        if specs:
+                            st.markdown("**Specifications:**")
+                            for spec in specs:
+                                with st.container():
+                                    st.markdown(f"- **{spec.get('requirement', '')}**")
+                                    if spec.get("numerical_values"):
+                                        st.markdown("  - Values: " + ", ".join(
+                                            f"{value} {unit}" for value, unit in spec["numerical_values"]
+                                        ))
+                                    st.markdown(f"  - {spec.get('value', '')}")
+                    
+                    with col2:
+                        # Display requirements
+                        reqs = [r for r in component_results if r.get("type") == "requirement"]
+                        if reqs:
+                            st.markdown("**Requirements:**")
+                            for req in reqs:
+                                with st.container():
+                                    if req.get("numerical_values"):
+                                        st.markdown("- Values: " + ", ".join(
+                                            f"{value} {unit}" for value, unit in req["numerical_values"]
+                                        ))
+                                    st.markdown(f"- {req.get('value', '')}")
+                    
+                    # Display context/path for debugging if needed
+                    with st.expander("Show Details", expanded=False):
+                        for result in component_results:
+                            st.text(f"Path: {result.get('path', '')}")
+                            st.text(f"Context: {result.get('context', '')}")
+                            st.markdown("---")
+        
+        # Add export options
+        if results:
+            st.markdown("---")
+            col1, col2 = st.columns(2)
             
-            df = pd.DataFrame(export_data)
-            csv = df.to_csv(index=False)
-            st.download_button(
-                "Download CSV",
-                csv,
-                "building_code_analysis.csv",
-                "text/csv",
-                key='download-csv'
-            )
+            with col1:
+                # Export as CSV
+                csv_data = []
+                for result in results:
+                    csv_data.append({
+                        "Location": result.get("location", ""),
+                        "Component": result.get("component", ""),
+                        "Type": result.get("type", ""),
+                        "Requirement": result.get("requirement", ""),
+                        "Value": result.get("value", ""),
+                        "Path": result.get("path", ""),
+                        "Context": result.get("context", "")
+                    })
+                csv = pd.DataFrame(csv_data).to_csv(index=False)
+                st.download_button(
+                    "Download Results (CSV)",
+                    csv,
+                    "building_code_results.csv",
+                    "text/csv",
+                    key="download-csv"
+                )
+            
+            with col2:
+                # Export as JSON
+                json_str = json.dumps(results, indent=2)
+                st.download_button(
+                    "Download Results (JSON)",
+                    json_str,
+                    "building_code_results.json",
+                    "application/json",
+                    key="download-json"
+                )
 
 def main():
     try:
@@ -904,7 +874,7 @@ def main():
                 
                 if results:
                     st.session_state.search_results = results
-                    display_results(results)
+                    st.session_state.analyzer.display_results(results)
                 else:
                     st.info("No results found. Try adjusting your search terms or check the search tips.")
             except Exception as e:
