@@ -7,6 +7,7 @@ import csv
 import io
 import time
 from difflib import get_close_matches
+import os
 
 class BuildingCodeAnalyzer:
     def __init__(self):
@@ -14,6 +15,16 @@ class BuildingCodeAnalyzer:
         self.quantities = {}
         self.guidelines = {}
         self.current_file = None
+        self.built_in_data = {}
+        self.building_codes = {}  # Store building codes by location
+        self.current_location = None
+        
+        # Load built-in data files
+        self.load_built_in_data()
+        
+        # Load building codes
+        self.load_building_codes()
+        
         self.ifc_database = {
             # Structural Elements
             "IfcFooting": {
@@ -137,6 +148,48 @@ class BuildingCodeAnalyzer:
             "spaces": ["room", "floor", "building"],
             "properties": ["dimension", "material", "thermal", "structural"]
         }
+
+    def load_built_in_data(self):
+        """Load all JSON files from the data directory."""
+        try:
+            data_dir = os.path.join(os.path.dirname(__file__), 'data')
+            if not os.path.exists(data_dir):
+                os.makedirs(data_dir)
+                
+            for filename in os.listdir(data_dir):
+                if filename.endswith('.json'):
+                    file_path = os.path.join(data_dir, filename)
+                    try:
+                        with open(file_path, 'r') as f:
+                            data = json.load(f)
+                            # Store the data with the filename as the key (without .json extension)
+                            key = os.path.splitext(filename)[0]
+                            self.built_in_data[key] = data
+                    except Exception as e:
+                        st.warning(f"Error loading built-in file {filename}: {str(e)}")
+                        continue
+        except Exception as e:
+            st.warning(f"Error accessing data directory: {str(e)}")
+
+    def load_building_codes(self):
+        """Load building code files from the building_codes directory."""
+        try:
+            codes_dir = os.path.join(os.path.dirname(__file__), 'data', 'building_codes')
+            if not os.path.exists(codes_dir):
+                os.makedirs(codes_dir)
+                
+            for filename in os.listdir(codes_dir):
+                if filename.endswith('.json'):
+                    location = os.path.splitext(filename)[0].replace('_', ' ').title()
+                    file_path = os.path.join(codes_dir, filename)
+                    try:
+                        with open(file_path, 'r') as f:
+                            self.building_codes[location] = json.load(f)
+                    except Exception as e:
+                        st.warning(f"Error loading building code for {location}: {str(e)}")
+                        continue
+        except Exception as e:
+            st.warning(f"Error accessing building codes directory: {str(e)}")
 
     def load_file(self, file_data) -> bool:
         """Load and process JSON data from uploaded file."""
@@ -295,54 +348,9 @@ class BuildingCodeAnalyzer:
                 return ifc_code
         return "IfcBuildingElement"  # Default fallback
 
-    def smart_search(self, query: str) -> List[Dict]:
-        """Enhanced search with IFC database priority and natural language processing."""
-        results = []
-        query = query.lower()
-        
-        # First, search IFC database
-        ifc_results = self.search_ifc_database(query)
-        if ifc_results:
-            return ifc_results
-            
-        # If no IFC results, check uploaded data
+    def _base_search(self, term: str) -> List[Dict]:
+        """Base search implementation that works on the current analyzer's data."""
         if not self.components:
-            st.warning("No data loaded. Please upload a file first.")
-            return []
-
-        # Check for category-based searches
-        for category, components in self.search_aliases.items():
-            if category in query:
-                for comp in components:
-                    if comp in self.components:
-                        results.extend(self.search(comp))
-                return results
-
-        # Check for IFC code searches
-        if "ifc" in query:
-            for comp_key, comp_data in self.components.items():
-                ifc_code = self.get_ifc_code(comp_key)
-                if ifc_code.lower() in query:
-                    results.extend(self.search(comp_key))
-            return results
-
-        # Fuzzy matching for component names
-        component_names = list(self.components.keys())
-        matches = get_close_matches(query, component_names, n=3, cutoff=0.6)
-        
-        for match in matches:
-            results.extend(self.search(match))
-
-        # If no fuzzy matches, try direct search
-        if not results:
-            results = self.search(query)
-
-        return results
-
-    def search(self, term: str) -> List[Dict]:
-        """Search for components and extract structured information."""
-        if not self.components:
-            st.warning("No data loaded. Please upload a file first.")
             return []
 
         results = []
@@ -388,48 +396,169 @@ class BuildingCodeAnalyzer:
         
         return results
 
-    def search_ifc_database(self, query: str) -> List[Dict]:
-        """Search the IFC database for matching components."""
+    def search(self, term: str) -> List[Dict]:
+        """Search for components and extract structured information."""
+        results = []
+        
+        # First search in built-in data
+        for dataset_name, data in self.built_in_data.items():
+            try:
+                # Create a temporary analyzer for this dataset
+                temp_analyzer = BuildingCodeAnalyzer()
+                temp_analyzer._process_data(data)
+                
+                # Search in this dataset
+                dataset_results = temp_analyzer._base_search(term)
+                
+                # Add dataset name to results
+                for result in dataset_results:
+                    result["dataset"] = dataset_name
+                    results.append(result)
+            except Exception as e:
+                st.warning(f"Error searching in dataset {dataset_name}: {str(e)}")
+                continue
+        
+        # Then search in uploaded data
+        if self.components:
+            uploaded_results = self._base_search(term)
+            for result in uploaded_results:
+                result["dataset"] = "uploaded"
+                results.append(result)
+        
+        return results
+
+    def display_dataset_info(self):
+        """Display information about available built-in datasets."""
+        if not self.built_in_data:
+            st.info("No built-in datasets available.")
+            return
+            
+        st.subheader("Available Built-in Datasets")
+        for dataset_name, data in self.built_in_data.items():
+            with st.expander(f"Dataset: {dataset_name}"):
+                try:
+                    # Create a temporary analyzer to process this dataset
+                    temp_analyzer = BuildingCodeAnalyzer()
+                    temp_analyzer._process_data(data)
+                    
+                    # Display statistics
+                    st.metric("Components", len(temp_analyzer.components))
+                    st.metric("Guidelines", len(temp_analyzer.guidelines))
+                    st.metric("Quantities", len(temp_analyzer.quantities))
+                    
+                    # Display sample components
+                    if temp_analyzer.components:
+                        st.write("Sample components:")
+                        sample_components = list(temp_analyzer.components.keys())[:5]
+                        for comp in sample_components:
+                            st.write(f"- {comp}")
+                except Exception as e:
+                    st.error(f"Error processing dataset {dataset_name}: {str(e)}")
+                    continue
+
+    def display_building_code_info(self):
+        """Display information about available building codes."""
+        if not self.building_codes:
+            st.info("No building codes available. Please add building code files to the data/building_codes directory.")
+            return
+            
+        st.subheader("Available Building Codes")
+        for location, code_data in self.building_codes.items():
+            with st.expander(f"Building Code: {location}"):
+                try:
+                    # Display statistics about the building code
+                    sections = list(code_data.keys())
+                    st.write("**Main Sections:**")
+                    for section in sections:
+                        st.write(f"- {section}")
+                    
+                    # Display sample requirements
+                    st.write("\n**Sample Requirements:**")
+                    def get_sample_requirements(d, max_samples=3, current=0):
+                        samples = []
+                        if not isinstance(d, dict) or current >= max_samples:
+                            return samples
+                        
+                        for k, v in d.items():
+                            if isinstance(v, dict):
+                                if "requirement" in str(v).lower() or "minimum" in str(v).lower():
+                                    samples.append(f"- {k}: {str(v)}")
+                                if len(samples) >= max_samples:
+                                    break
+                                samples.extend(get_sample_requirements(v, max_samples, len(samples)))
+                        return samples[:max_samples]
+                    
+                    samples = get_sample_requirements(code_data)
+                    for sample in samples:
+                        st.write(sample)
+                        
+                except Exception as e:
+                    st.error(f"Error processing building code for {location}: {str(e)}")
+                    continue
+
+    def search_building_codes(self, query: str, location: Optional[str] = None) -> List[Dict]:
+        """Search building codes with natural language processing."""
         results = []
         query = query.lower()
         
-        # Direct IFC code search
-        if query.startswith("ifc"):
-            for ifc_code, data in self.ifc_database.items():
-                if ifc_code.lower() == query:
-                    results.append({
-                        "component": data["name"],
-                        "type": data["type"],
-                        "ifc_code": ifc_code,
-                        "description": data["description"],
-                        "properties": data["properties"]
-                    })
-                    return results
+        # Extract key terms from the query
+        component_terms = ["door", "window", "wall", "ceiling", "floor", "roof", "bathroom", "kitchen"]
+        requirement_terms = ["height", "width", "depth", "distance", "clearance", "size", "dimension", 
+                           "rating", "requirement", "minimum", "maximum", "spacing"]
         
-        # Search by component name or description
-        for ifc_code, data in self.ifc_database.items():
-            if (query in data["name"].lower() or 
-                query in data["description"].lower() or
-                query in data["type"].lower()):
-                results.append({
-                    "component": data["name"],
-                    "type": data["type"],
-                    "ifc_code": ifc_code,
-                    "description": data["description"],
-                    "properties": data["properties"]
-                })
+        # Determine what component and requirement we're looking for
+        target_component = next((term for term in component_terms if term in query), None)
+        target_requirement = next((term for term in requirement_terms if term in query), None)
+        
+        # If location is specified, only search that location
+        locations_to_search = [location] if location else self.building_codes.keys()
+        
+        for loc in locations_to_search:
+            if loc not in self.building_codes:
+                continue
+                
+            code_data = self.building_codes[loc]
             
-            # Search in properties
-            for category, props in data["properties"].items():
-                if isinstance(props, list) and any(query in prop.lower() for prop in props):
-                    if not any(r["ifc_code"] == ifc_code for r in results):  # Avoid duplicates
-                        results.append({
-                            "component": data["name"],
-                            "type": data["type"],
-                            "ifc_code": ifc_code,
-                            "description": data["description"],
-                            "properties": data["properties"]
-                        })
+            # Search through the building code data
+            def search_dict(d, path="", context=None):
+                if isinstance(d, dict):
+                    for k, v in d.items():
+                        new_path = f"{path}.{k}" if path else k
+                        new_context = k if context is None else f"{context} - {k}"
+                        
+                        # Check if this key/value matches what we're looking for
+                        k_lower = k.lower()
+                        if target_component and target_component in k_lower:
+                            if target_requirement:
+                                # If we're looking for a specific requirement
+                                if isinstance(v, dict):
+                                    for req_k, req_v in v.items():
+                                        if any(term in req_k.lower() for term in requirement_terms):
+                                            results.append({
+                                                "location": loc,
+                                                "component": k,
+                                                "requirement": req_k,
+                                                "value": req_v,
+                                                "path": new_path,
+                                                "context": new_context
+                                            })
+                            else:
+                                # If we just want component info
+                                results.append({
+                                    "location": loc,
+                                    "component": k,
+                                    "value": v,
+                                    "path": new_path,
+                                    "context": new_context
+                                })
+                        
+                        # Recurse into nested structures
+                        search_dict(v, new_path, new_context)
+                elif isinstance(d, list):
+                    for i, item in enumerate(d):
+                        search_dict(item, f"{path}[{i}]", context)
+            
+            search_dict(code_data)
         
         return results
 
@@ -472,71 +601,83 @@ def display_results(results: List[Dict]):
 
     st.write(f"Found {len(results)} components:")
     
+    # Group results by dataset
+    results_by_dataset = {}
     for result in results:
-        with st.expander(f"{result['component']} ({result['type']})"):
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                # Display IFC code
-                st.write(f"**🏷️ IFC Code:** {result['ifc_code']}")
+        dataset = result.get("dataset", "unknown")
+        if dataset not in results_by_dataset:
+            results_by_dataset[dataset] = []
+        results_by_dataset[dataset].append(result)
+    
+    # Display results grouped by dataset
+    for dataset, dataset_results in results_by_dataset.items():
+        st.subheader(f"Results from {dataset.title()} Dataset:")
+        
+        for result in dataset_results:
+            with st.expander(f"{result['component']} ({result['type']})"):
+                col1, col2 = st.columns([1, 1])
                 
-                # Display description if available (from IFC database)
-                if "description" in result:
-                    st.write(f"**📝 Description:** {result['description']}")
+                with col1:
+                    # Display IFC code
+                    st.write(f"**🏷️ IFC Code:** {result['ifc_code']}")
+                    
+                    # Display description if available (from IFC database)
+                    if "description" in result:
+                        st.write(f"**📝 Description:** {result['description']}")
+                    
+                    # Display direct quantities
+                    if "quantity" in result:
+                        st.metric(
+                            "Primary Quantity",
+                            f"{result['quantity']['value']} {result['quantity']['unit']}"
+                        )
+                    
+                    # Display dimensions
+                    if "properties" in result and "dimensions" in result["properties"]:
+                        st.write("**📏 Dimensions:**")
+                        for dim in result["properties"]["dimensions"]:
+                            st.write(f"- {dim}")
+                    elif result["details"].get("dimensions"):
+                        st.write("**📏 Dimensions:**")
+                        for dim in result["details"]["dimensions"]:
+                            st.write(f"- {dim['value']} {dim['unit']}")
+                    
+                    # Display materials
+                    if "properties" in result and "materials" in result["properties"]:
+                        st.write("**🧱 Materials:**")
+                        for material in result["properties"]["materials"]:
+                            st.write(f"- {material}")
+                    elif result["details"].get("materials"):
+                        st.write("**🧱 Materials:**")
+                        for material in result["details"]["materials"]:
+                            st.write(f"- {material.capitalize()}")
                 
-                # Display direct quantities
-                if "quantity" in result:
-                    st.metric(
-                        "Primary Quantity",
-                        f"{result['quantity']['value']} {result['quantity']['unit']}"
-                    )
+                with col2:
+                    # Display specifications
+                    if "properties" in result and "specifications" in result["properties"]:
+                        st.write("**📊 Specifications:**")
+                        for spec in result["properties"]["specifications"]:
+                            st.write(f"- {spec}")
+                    elif result["details"].get("specifications"):
+                        st.write("**📊 Specifications:**")
+                        for spec in result["details"]["specifications"]:
+                            st.write(f"- {spec['value']} {spec['unit']}")
+                    
+                    # Display placement information
+                    if result["details"].get("placement"):
+                        st.write("**📍 Placement:**")
+                        for placement in result["details"]["placement"]:
+                            st.write(f"- {placement.capitalize()}")
                 
-                # Display dimensions
-                if "properties" in result and "dimensions" in result["properties"]:
-                    st.write("**📏 Dimensions:**")
-                    for dim in result["properties"]["dimensions"]:
-                        st.write(f"- {dim}")
-                elif result["details"].get("dimensions"):
-                    st.write("**📏 Dimensions:**")
-                    for dim in result["details"]["dimensions"]:
-                        st.write(f"- {dim['value']} {dim['unit']}")
-                
-                # Display materials
-                if "properties" in result and "materials" in result["properties"]:
-                    st.write("**🧱 Materials:**")
-                    for material in result["properties"]["materials"]:
-                        st.write(f"- {material}")
-                elif result["details"].get("materials"):
-                    st.write("**🧱 Materials:**")
-                    for material in result["details"]["materials"]:
-                        st.write(f"- {material.capitalize()}")
-            
-            with col2:
-                # Display specifications
-                if "properties" in result and "specifications" in result["properties"]:
-                    st.write("**📊 Specifications:**")
-                    for spec in result["properties"]["specifications"]:
-                        st.write(f"- {spec}")
-                elif result["details"].get("specifications"):
-                    st.write("**📊 Specifications:**")
-                    for spec in result["details"]["specifications"]:
-                        st.write(f"- {spec['value']} {spec['unit']}")
-                
-                # Display placement information
-                if result["details"].get("placement"):
-                    st.write("**📍 Placement:**")
-                    for placement in result["details"]["placement"]:
-                        st.write(f"- {placement.capitalize()}")
-            
-            # Display requirements (full width)
-            if "properties" in result and "requirements" in result["properties"]:
-                st.write("**⚠️ Requirements:**")
-                for req in result["properties"]["requirements"]:
-                    st.write(f"- {req}")
-            elif result["details"].get("requirements"):
-                st.write("**⚠️ Requirements:**")
-                for req in result["details"]["requirements"]:
-                    st.write(f"- {req.capitalize()}")
+                # Display requirements (full width)
+                if "properties" in result and "requirements" in result["properties"]:
+                    st.write("**⚠️ Requirements:**")
+                    for req in result["properties"]["requirements"]:
+                        st.write(f"- {req}")
+                elif result["details"].get("requirements"):
+                    st.write("**⚠️ Requirements:**")
+                    for req in result["details"]["requirements"]:
+                        st.write(f"- {req.capitalize()}")
     
     # Add export options
     st.markdown("---")
@@ -551,17 +692,18 @@ def display_results(results: List[Dict]):
                 # Create a structured CSV
                 output = io.StringIO()
                 writer = csv.writer(output)
-                headers = ["Component", "Type", "Category", "Detail"]
+                headers = ["Dataset", "Component", "Type", "Category", "Detail"]
                 writer.writerow(headers)
                 
                 for result in results:
                     component = result["component"]
                     comp_type = result["type"]
+                    dataset = result.get("dataset", "unknown")
                     
                     # Write quantities
                     if "quantity" in result:
                         writer.writerow([
-                            component, comp_type, "Quantity",
+                            dataset, component, comp_type, "Quantity",
                             f"{result['quantity']['value']} {result['quantity']['unit']}"
                         ])
                     
@@ -573,7 +715,7 @@ def display_results(results: List[Dict]):
                                     detail = f"{item['value']} {item['unit']}"
                                 else:
                                     detail = item.capitalize()
-                                writer.writerow([component, comp_type, category.capitalize(), detail])
+                                writer.writerow([dataset, component, comp_type, category.capitalize(), detail])
                 
                 st.download_button(
                     label="Download CSV",
@@ -605,94 +747,107 @@ def main():
             st.session_state.uploaded_file = None
             st.session_state.search_results = None
             st.session_state.last_search = None
+            st.session_state.selected_location = None
 
         # Main content - Search interface first
-        st.subheader("Search Building Components")
-        col1, col2 = st.columns([3, 1])
+        st.subheader("Search Building Requirements")
+        
+        # Location selector and search
+        col1, col2, col3 = st.columns([2, 1, 1])
         
         with col1:
             search_term = st.text_input(
-                "Enter search term",
-                placeholder="e.g., foundation, wall, electrical, or IFC code",
-                help="You can search by component name, category, or IFC code. Try natural language queries like 'show me all structural elements' or 'find electrical components'"
+                "Enter your question",
+                placeholder="e.g., what are the height requirements for a door in California?",
+                help="You can ask about specific requirements like height, width, or any other specifications for building components."
             )
         
         with col2:
+            locations = ["All Locations"] + sorted(list(st.session_state.analyzer.building_codes.keys()))
+            selected_location = st.selectbox(
+                "Select Location",
+                locations,
+                index=0
+            )
+            st.session_state.selected_location = None if selected_location == "All Locations" else selected_location
+        
+        with col3:
             search_button = st.button("Search", type="primary", use_container_width=True)
         
         # Add search tips
         with st.expander("💡 Search Tips"):
             st.markdown("""
-            You can search using:
-            - Component names (e.g., 'foundation', 'wall')
-            - Categories (e.g., 'structure', 'services', 'materials')
-            - IFC codes (e.g., 'IfcWall', 'IfcBeam')
-            - Natural language (e.g., 'show me all structural elements')
-            - Properties (e.g., 'dimensions', 'materials')
+            You can search by asking questions like:
+            - What are the height requirements for doors in California?
+            - What is the minimum ceiling height for bedrooms?
+            - What are the window specifications for bathrooms?
+            - What are the fire rating requirements for walls?
+            
+            Include specific details in your question:
+            - Component (door, window, wall, etc.)
+            - Requirement (height, width, rating, etc.)
+            - Location (if specific to a region)
             """)
         
         if search_button and search_term:
             try:
-                # First try searching the IFC database
-                results = st.session_state.analyzer.search_ifc_database(search_term)
-                
-                # If we have uploaded data, also search that
-                if hasattr(st.session_state.analyzer, 'components') and len(st.session_state.analyzer.components) > 0:
-                    user_data_results = st.session_state.analyzer.smart_search(search_term)
-                    if user_data_results:
-                        results.extend(user_data_results)
-                
-                st.session_state.search_results = results
-                st.session_state.last_search = search_term
+                # Search building codes
+                results = st.session_state.analyzer.search_building_codes(
+                    search_term,
+                    st.session_state.selected_location
+                )
                 
                 if results:
+                    st.session_state.search_results = results
                     display_results(results)
                 else:
-                    st.info(f"No results found for '{search_term}'. Try a different search term or check the search tips.")
+                    st.info(f"No specific requirements found for your query. Try rephrasing or check the search tips.")
             except Exception as e:
                 st.error(f"Search error: {str(e)}")
-                st.info("Please try a different search term or check the search tips.")
+                st.info("Please try rephrasing your question or check the search tips.")
 
-        # Sidebar - Move file upload to sidebar
+        # Sidebar - Show available building codes and upload option
         with st.sidebar:
-            st.header("Additional Data")
+            # Show available building codes
+            st.header("Available Building Codes")
+            st.session_state.analyzer.display_building_code_info()
+            
+            st.markdown("---")
+            
+            # Upload option for new building codes
+            st.header("Add Building Code")
             st.markdown("""
-            The search works with the built-in IFC database by default.
-            You can optionally upload your own building data for more detailed analysis.
+            You can add new building code files in JSON format.
+            The file name should be the location (e.g., `california.json`).
             """)
             
-            uploaded_file = st.file_uploader("Upload Additional Data (JSON)", type="json", key="json_uploader")
+            new_code_file = st.file_uploader("Upload Building Code (JSON)", type="json", key="code_uploader")
             
-            if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
+            if new_code_file is not None:
                 try:
-                    with st.spinner('Loading file...'):
-                        st.session_state.uploaded_file = uploaded_file
-                        file_contents = uploaded_file.read().decode("utf-8")
-                        st.info("File read successfully, processing data...")
-                        if st.session_state.analyzer.load_file(file_contents):
-                            st.success("File loaded successfully!")
-                            time.sleep(1)  # Give UI time to update
-                            st.rerun()
-                        else:
-                            st.error("Failed to process the file. Please check the file format.")
-                except json.JSONDecodeError as je:
-                    st.error("Invalid JSON file. Please check the file format.")
-                    st.session_state.analyzer = BuildingCodeAnalyzer()
+                    with st.spinner('Loading building code...'):
+                        file_contents = new_code_file.read().decode("utf-8")
+                        # Save to building_codes directory
+                        filename = new_code_file.name
+                        location = os.path.splitext(filename)[0].replace('_', ' ').title()
+                        
+                        # Save the file
+                        codes_dir = os.path.join(os.path.dirname(__file__), 'data', 'building_codes')
+                        if not os.path.exists(codes_dir):
+                            os.makedirs(codes_dir)
+                        
+                        file_path = os.path.join(codes_dir, filename)
+                        with open(file_path, 'w') as f:
+                            f.write(file_contents)
+                        
+                        # Reload building codes
+                        st.session_state.analyzer.load_building_codes()
+                        st.success(f"Building code for {location} loaded successfully!")
+                        time.sleep(1)
+                        st.rerun()
                 except Exception as e:
-                    st.error(f"Error loading file: {str(e)}")
-                    st.session_state.analyzer = BuildingCodeAnalyzer()
+                    st.error(f"Error loading building code: {str(e)}")
             
-            if hasattr(st.session_state.analyzer, 'components') and len(st.session_state.analyzer.components) > 0:
-                st.markdown("---")
-                st.header("Uploaded Data Statistics")
-                try:
-                    st.metric("Components", len(st.session_state.analyzer.components))
-                    st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
-                    st.metric("Quantities", len(st.session_state.analyzer.quantities))
-                except Exception as e:
-                    st.error("Error displaying statistics")
-                    st.session_state.analyzer = BuildingCodeAnalyzer()
-
             # Add IFC database statistics
             st.markdown("---")
             st.header("IFC Database")
@@ -701,34 +856,6 @@ def main():
             except Exception as e:
                 st.error("Error accessing IFC database")
                 st.session_state.analyzer = BuildingCodeAnalyzer()
-            
-            # Component type filter
-            st.markdown("---")
-            st.header("Filter by Type")
-            try:
-                component_types = {"All", "Structural", "Services", "Space"}
-                selected_type = st.selectbox("Select component type", sorted(list(component_types)))
-                
-                if selected_type != "All":
-                    filtered_results = []
-                    for ifc_code, data in st.session_state.analyzer.ifc_database.items():
-                        if data["type"] == selected_type:
-                            filtered_results.append({
-                                "component": data["name"],
-                                "type": data["type"],
-                                "ifc_code": ifc_code,
-                                "description": data["description"],
-                                "properties": data["properties"]
-                            })
-                    
-                    if filtered_results:
-                        st.session_state.search_results = filtered_results
-                        display_results(filtered_results)
-                    else:
-                        st.warning(f"No components found of type: {selected_type}")
-            except Exception as e:
-                st.error("Error in component filtering")
-                st.info("Please try searching for components instead.")
 
     except Exception as e:
         st.error(f"Application error occurred: {str(e)}")
