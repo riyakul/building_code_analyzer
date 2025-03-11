@@ -478,20 +478,51 @@ def main():
             st.session_state.uploaded_file = None
             st.session_state.search_results = None
 
-        # Sidebar
-        with st.sidebar:
-            st.header("Statistics")
-            try:
-                st.metric("Components", len(st.session_state.analyzer.components))
-                st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
-                st.metric("Quantities", len(st.session_state.analyzer.quantities))
-            except Exception as e:
-                st.error("Error displaying statistics")
-                st.session_state.analyzer = BuildingCodeAnalyzer()  # Reset analyzer
+        # Main content - Search interface first
+        st.subheader("Search Building Components")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            search_term = st.text_input(
+                "Enter search term",
+                placeholder="e.g., foundation, wall, electrical, or IFC code",
+                help="You can search by component name, category, or IFC code. Try natural language queries like 'show me all structural elements' or 'find electrical components'"
+            )
+        
+        with col2:
+            search_button = st.button("Search", type="primary", use_container_width=True)
+        
+        # Add search tips
+        with st.expander("💡 Search Tips"):
+            st.markdown("""
+            You can search using:
+            - Component names (e.g., 'foundation', 'wall')
+            - Categories (e.g., 'structure', 'services', 'materials')
+            - IFC codes (e.g., 'IfcWall', 'IfcBeam')
+            - Natural language (e.g., 'show me all structural elements')
+            - Properties (e.g., 'dimensions', 'materials')
+            """)
+        
+        if search_button and search_term:
+            # First try searching the IFC database
+            results = st.session_state.analyzer.search_ifc_database(search_term)
+            
+            # If we have uploaded data, also search that
+            if len(st.session_state.analyzer.components) > 0:
+                results.extend(st.session_state.analyzer.smart_search(search_term))
+            
+            st.session_state.search_results = results
+            display_results(results)
 
-            st.markdown("---")
-            st.header("Upload Data")
-            uploaded_file = st.file_uploader("Choose a JSON file", type="json", key="json_uploader")
+        # Sidebar - Move file upload to sidebar
+        with st.sidebar:
+            st.header("Additional Data")
+            st.markdown("""
+            The search works with the built-in IFC database by default.
+            You can optionally upload your own building data for more detailed analysis.
+            """)
+            
+            uploaded_file = st.file_uploader("Upload Additional Data (JSON)", type="json", key="json_uploader")
             
             if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
                 try:
@@ -510,81 +541,52 @@ def main():
                     st.session_state.analyzer = BuildingCodeAnalyzer()
                 except Exception as e:
                     st.error(f"Error loading file: {str(e)}")
-                    st.session_state.analyzer = BuildingCodeAnalyzer()  # Reset analyzer
-
-        # Main content
-        if len(st.session_state.analyzer.components) > 0:
-            try:
-                # Search interface
-                st.subheader("Search Components")
-                col1, col2 = st.columns([3, 1])
-                
-                with col1:
-                    search_term = st.text_input(
-                        "Enter search term",
-                        placeholder="e.g., foundation, wall, electrical, or IFC code",
-                        help="You can search by component name, category, or IFC code. Try natural language queries like 'show me all structural elements' or 'find electrical components'"
-                    )
-                
-                with col2:
-                    search_button = st.button("Search", type="primary", use_container_width=True)
-                
-                if search_button and search_term:
-                    results = st.session_state.analyzer.smart_search(search_term)
-                    st.session_state.search_results = results
-                    display_results(results)
-                
-                # Add search tips
-                with st.expander("💡 Search Tips"):
-                    st.markdown("""
-                    You can search using:
-                    - Component names (e.g., 'foundation', 'wall')
-                    - Categories (e.g., 'structure', 'services', 'materials')
-                    - IFC codes (e.g., 'IfcWall', 'IfcBeam')
-                    - Natural language (e.g., 'show me all structural elements')
-                    - Properties (e.g., 'dimensions', 'materials')
-                    """)
-                
-                # Component type filter
-                st.subheader("Filter by Type")
+                    st.session_state.analyzer = BuildingCodeAnalyzer()
+            
+            if len(st.session_state.analyzer.components) > 0:
+                st.markdown("---")
+                st.header("Uploaded Data Statistics")
                 try:
-                    # Get unique component types safely
-                    component_types = {"General", "Structural", "Utilities"}  # Default types
-                    for comp in st.session_state.analyzer.components.values():
-                        if isinstance(comp, dict) and "type" in comp:
-                            component_types.add(comp["type"])
-                    
-                    filter_options = ["All"] + sorted(list(component_types))
-                    selected_type = st.selectbox("Select component type", filter_options)
-                    
-                    if selected_type != "All":
-                        filtered_components = {
-                            k: v for k, v in st.session_state.analyzer.components.items()
-                            if isinstance(v, dict) and "type" in v and v["type"] == selected_type
-                        }
-                        
-                        if filtered_components:
-                            st.write(f"Found {len(filtered_components)} {selected_type} components:")
-                            for key, comp in filtered_components.items():
-                                with st.expander(key):
-                                    st.write(f"**Type:** {comp['type']}")
-                                    st.write(f"**IFC Code:** {st.session_state.analyzer.get_ifc_code(key)}")
-                                    if key in st.session_state.analyzer.quantities:
-                                        q = st.session_state.analyzer.quantities[key]
-                                        st.metric("Quantity", f"{q['value']} {q['unit']}")
-                                    if key in st.session_state.analyzer.guidelines:
-                                        st.write("**Guidelines:**")
-                                        st.write(st.session_state.analyzer.guidelines[key]["description"])
-                        else:
-                            st.warning(f"No components found of type: {selected_type}")
+                    st.metric("Components", len(st.session_state.analyzer.components))
+                    st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
+                    st.metric("Quantities", len(st.session_state.analyzer.quantities))
                 except Exception as e:
-                    st.error("Error in component filtering")
-                    st.info("Please try searching for components instead.")
+                    st.error("Error displaying statistics")
+                    st.session_state.analyzer = BuildingCodeAnalyzer()
+
+            # Add IFC database statistics
+            st.markdown("---")
+            st.header("IFC Database")
+            st.metric("Available IFC Components", len(st.session_state.analyzer.ifc_database))
+            
+            # Component type filter
+            st.markdown("---")
+            st.header("Filter by Type")
+            try:
+                component_types = {"All", "Structural", "Services", "Space"}
+                selected_type = st.selectbox("Select component type", sorted(list(component_types)))
+                
+                if selected_type != "All":
+                    filtered_results = []
+                    for ifc_code, data in st.session_state.analyzer.ifc_database.items():
+                        if data["type"] == selected_type:
+                            filtered_results.append({
+                                "component": data["name"],
+                                "type": data["type"],
+                                "ifc_code": ifc_code,
+                                "description": data["description"],
+                                "properties": data["properties"]
+                            })
+                    
+                    if filtered_results:
+                        st.session_state.search_results = filtered_results
+                        display_results(filtered_results)
+                    else:
+                        st.warning(f"No components found of type: {selected_type}")
             except Exception as e:
-                st.error("Error in main content")
-                st.info("Please try refreshing the page")
-        else:
-            st.info("👈 Please upload a JSON file to get started!")
+                st.error("Error in component filtering")
+                st.info("Please try searching for components instead.")
+
     except Exception as e:
         st.error("Application error occurred. Please refresh the page.")
         st.session_state.clear()  # Clear session state on critical error
