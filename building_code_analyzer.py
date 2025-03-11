@@ -445,68 +445,118 @@ class BuildingCodeAnalyzer:
 
     def search(self, term: str) -> List[Dict]:
         """Search for components and extract structured information."""
-        results = []
-        query_terms = term.lower().split()
-        
-        # Create a copy of components to iterate over
-        components_to_search = dict(self.components)
-        
-        for comp_key, comp_data in components_to_search.items():
-            should_include = False
+        try:
+            results = []
+            if not term:
+                return results
+
+            # Clean and process the natural language query
+            query = term.lower()
             
-            # Check component name and path
-            if any(term in comp_key.lower() for term in query_terms):
-                should_include = True
+            # Extract key information from natural language query
+            dimension_terms = ["width", "height", "depth", "length", "diameter", "size"]
+            material_terms = ["made of", "material", "built with", "constructed with"]
+            requirement_terms = ["requirement", "required", "must be", "should be", "minimum", "maximum"]
             
-            # Check component type
-            if any(term in comp_data["type"].lower() for term in query_terms):
-                should_include = True
+            # Remove common question phrases
+            query = query.replace("i want to know", "")
+            query = query.replace("tell me", "")
+            query = query.replace("what is", "")
+            query = query.replace("show me", "")
+            query = query.replace("the", "")
+            query = query.strip()
             
-            # Check guidelines
-            if comp_key in self.guidelines:
-                guideline = self.guidelines[comp_key]
-                if any(term in str(guideline).lower() for term in query_terms):
-                    should_include = True
+            # Extract search focus
+            search_focus = {
+                "dimension": any(term in query for term in dimension_terms),
+                "material": any(term in query for term in material_terms),
+                "requirement": any(term in query for term in requirement_terms)
+            }
             
-            # Check quantities
-            if comp_key in self.quantities:
-                quantity = self.quantities[comp_key]
-                if any(term in str(quantity).lower() for term in query_terms):
-                    should_include = True
+            # Extract component name (last word or words after "of")
+            component_name = query.split("of ")[-1].strip() if "of" in query else query
             
-            if should_include:
-                result = {
-                    "component": comp_key,
-                    "type": comp_data["type"],
-                    "details": {}
-                }
-                
-                # Add quantities if available
-                if "quantity" in comp_data:
-                    result["quantity"] = comp_data["quantity"]
-                
-                # Add extracted information
-                for key in ["numerical_values", "requirements", "materials", "dimensions", "specifications"]:
-                    if key in comp_data and comp_data[key]:
-                        result["details"][key] = comp_data[key]
-                
-                # Add guideline description if available
-                if comp_key in self.guidelines:
-                    result["description"] = self.guidelines[comp_key]["description"]
-                
-                results.append(result)
-        
-        # Also search in IFC database
-        ifc_results = self.search_ifc_database(term)
-        if ifc_results:
-            results.extend(ifc_results)
+            # Create copies of data structures to prevent modification during iteration
+            components_to_search = dict(self.components)
+            guidelines_copy = dict(self.guidelines)
+            quantities_copy = dict(self.quantities)
             
-        # Search building codes if available
-        building_code_results = self.search_building_codes(term)
-        if building_code_results:
-            results.extend(building_code_results)
-        
-        return results
+            # Search through components
+            for comp_key, comp_data in components_to_search.items():
+                try:
+                    should_include = False
+                    comp_key_lower = comp_key.lower()
+                    
+                    # Check if component matches
+                    if component_name in comp_key_lower:
+                        should_include = True
+                    
+                    # Check guidelines and specifications
+                    if comp_key in guidelines_copy:
+                        guideline = guidelines_copy[comp_key]
+                        if component_name in str(guideline).lower():
+                            should_include = True
+                    
+                    if should_include:
+                        result = {
+                            "component": comp_key,
+                            "type": comp_data.get("type", "Unknown"),
+                            "details": {}
+                        }
+                        
+                        # Add relevant details based on search focus
+                        if "details" in comp_data:
+                            details = comp_data["details"]
+                            if search_focus["dimension"] and "dimensions" in details:
+                                result["details"]["dimensions"] = details["dimensions"]
+                            if search_focus["material"] and "materials" in details:
+                                result["details"]["materials"] = details["materials"]
+                            if search_focus["requirement"] and "requirements" in details:
+                                result["details"]["requirements"] = details["requirements"]
+                        
+                        # Add all details if no specific focus
+                        if not any(search_focus.values()):
+                            for key in ["dimensions", "materials", "requirements", "specifications"]:
+                                if key in comp_data:
+                                    result["details"][key] = comp_data[key]
+                        
+                        results.append(result)
+                except Exception as e:
+                    st.warning(f"Error processing component {comp_key}: {str(e)}")
+                    continue
+            
+            # Search in IFC database with the same focus
+            try:
+                ifc_results = self.search_ifc_database(component_name)
+                if ifc_results:
+                    # Filter IFC results based on search focus
+                    for result in ifc_results:
+                        if "properties" in result:
+                            filtered_props = {}
+                            if search_focus["dimension"]:
+                                filtered_props["dimensions"] = result["properties"].get("dimensions", [])
+                            if search_focus["material"]:
+                                filtered_props["materials"] = result["properties"].get("materials", [])
+                            if search_focus["requirement"]:
+                                filtered_props["requirements"] = result["properties"].get("requirements", [])
+                            result["properties"] = filtered_props if any(filtered_props.values()) else result["properties"]
+                    results.extend(ifc_results)
+            except Exception as e:
+                st.warning(f"Error searching IFC database: {str(e)}")
+            
+            # Search building codes with the same focus
+            try:
+                building_code_results = self.search_building_codes(component_name)
+                if building_code_results:
+                    results.extend(building_code_results)
+            except Exception as e:
+                st.warning(f"Error searching building codes: {str(e)}")
+            
+            return results
+            
+        except Exception as e:
+            st.error(f"Error in search function: {str(e)}")
+            return []
 
     def display_dataset_info(self):
         """Display information about available built-in datasets."""
@@ -741,67 +791,123 @@ class BuildingCodeAnalyzer:
 
     def display_results(self, results: List[Dict]):
         """Display search results focusing on quantitative details."""
-        if not results:
-            st.warning("No matching components found.")
-            return
+        try:
+            if not isinstance(results, list):
+                st.warning("Invalid results format")
+                return
+                
+            if not results:
+                st.warning("No matching components found.")
+                return
 
-        st.write(f"Found {len(results)} matching components:")
-        
-        # Group results by component type
-        results_by_type = {}
-        for result in results:
-            comp_type = result["type"]
-            if comp_type not in results_by_type:
-                results_by_type[comp_type] = []
-            results_by_type[comp_type].append(result)
-        
-        # Display results organized by type
-        for comp_type, type_results in results_by_type.items():
-            st.subheader(f"{comp_type} Components")
+            st.write(f"Found {len(results)} matching components:")
             
-            for result in type_results:
-                with st.expander(f"Component: {result['component']}"):
-                    # Display quantitative information first
-                    if "details" in result:
-                        details = result["details"]
+            # Group results by component type with error handling
+            results_by_type = {}
+            for idx, result in enumerate(results):
+                try:
+                    if not isinstance(result, dict):
+                        continue
                         
-                        # Display dimensions with numerical values
-                        if "dimensions" in details and details["dimensions"]:
-                            st.write("📏 **Dimensions:**")
-                            for dim in details["dimensions"]:
-                                st.write(f"- {dim['value']} {dim['unit']}")
+                    comp_type = str(result.get("type", "Unknown"))
+                    if comp_type not in results_by_type:
+                        results_by_type[comp_type] = []
+                    results_by_type[comp_type].append(result)
+                except Exception as e:
+                    st.warning(f"Error processing result {idx}: {str(e)}")
+                    continue
+            
+            # Display results organized by type
+            for comp_type, type_results in results_by_type.items():
+                try:
+                    if not isinstance(type_results, list) or not type_results:
+                        continue
                         
-                        # Display specifications with numerical values
-                        if "specifications" in details and details["specifications"]:
-                            st.write("⚙️ **Specifications:**")
-                            for spec in details["specifications"]:
-                                st.write(f"- {spec['value']} {spec['unit']}")
+                    st.subheader(f"{comp_type} Components")
                     
-                    # Display direct quantities if available
-                    if "quantity" in result:
-                        st.write("🔢 **Quantity:**")
-                        st.write(f"- {result['quantity']['value']} {result['quantity']['unit']}")
+                    for result in type_results:
+                        try:
+                            if not isinstance(result, dict):
+                                continue
+                                
+                            component_name = str(result.get("component", "Unknown Component"))
+                            with st.expander(f"Component: {component_name}"):
+                                # Display quantitative information first
+                                details = result.get("details", {})
+                                if not isinstance(details, dict):
+                                    details = {}
+                                
+                                # Display dimensions with numerical values
+                                dimensions = details.get("dimensions", [])
+                                if isinstance(dimensions, list) and dimensions:
+                                    st.write("📏 **Dimensions:**")
+                                    for dim in dimensions:
+                                        try:
+                                            if isinstance(dim, dict):
+                                                value = dim.get("value", "N/A")
+                                                unit = dim.get("unit", "")
+                                                st.write(f"- {value} {unit}")
+                                        except Exception as e:
+                                            st.warning(f"Error displaying dimension: {str(e)}")
+                                
+                                # Display specifications with numerical values
+                                specs = details.get("specifications", [])
+                                if isinstance(specs, list) and specs:
+                                    st.write("⚙️ **Specifications:**")
+                                    for spec in specs:
+                                        try:
+                                            if isinstance(spec, dict):
+                                                value = spec.get("value", "N/A")
+                                                unit = spec.get("unit", "")
+                                                st.write(f"- {value} {unit}")
+                                        except Exception as e:
+                                            st.warning(f"Error displaying specification: {str(e)}")
+                                
+                                # Display direct quantities if available
+                                quantity = result.get("quantity")
+                                if isinstance(quantity, dict):
+                                    st.write("🔢 **Quantity:**")
+                                    try:
+                                        value = quantity.get("value", "N/A")
+                                        unit = quantity.get("unit", "")
+                                        st.write(f"- {value} {unit}")
+                                    except Exception as e:
+                                        st.warning(f"Error displaying quantity: {str(e)}")
+                                
+                                # Display numerical values from requirements
+                                requirements = details.get("requirements", [])
+                                if isinstance(requirements, list) and requirements:
+                                    try:
+                                        numerical_reqs = []
+                                        for req in requirements:
+                                            if not isinstance(req, str):
+                                                continue
+                                            matches = re.findall(
+                                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
+                                                str(req).lower()
+                                            )
+                                            if matches:
+                                                numerical_reqs.extend(matches)
+                                        
+                                        if numerical_reqs:
+                                            st.write("📋 **Quantitative Requirements:**")
+                                            for value, unit in numerical_reqs:
+                                                st.write(f"- {value} {unit}")
+                                    except Exception as e:
+                                        st.warning(f"Error processing requirements: {str(e)}")
+                        except Exception as e:
+                            st.warning(f"Error displaying component {component_name}: {str(e)}")
+                            continue
+                except Exception as e:
+                    st.warning(f"Error displaying component type {comp_type}: {str(e)}")
+                    continue
                     
-                    # Display numerical values from requirements if they exist
-                    if "details" in result and "requirements" in result["details"]:
-                        requirements = result["details"]["requirements"]
-                        numerical_reqs = []
-                        for req in requirements:
-                            # Extract numerical values with units from requirements
-                            matches = re.findall(
-                                r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)",
-                                str(req).lower()
-                            )
-                            if matches:
-                                numerical_reqs.extend(matches)
-                        
-                        if numerical_reqs:
-                            st.write("📋 **Quantitative Requirements:**")
-                            for value, unit in numerical_reqs:
-                                st.write(f"- {value} {unit}")
+        except Exception as e:
+            st.error(f"Error displaying results: {str(e)}")
 
 def main():
     try:
+        # Configure the page
         st.set_page_config(
             page_title="Building Code Analyzer",
             page_icon="🏗️",
@@ -810,91 +916,111 @@ def main():
 
         st.title("Building Code Analyzer 🏗️")
 
-        # Initialize session state
+        # Initialize session state safely
         if 'analyzer' not in st.session_state:
-            st.session_state.analyzer = BuildingCodeAnalyzer()
-            st.session_state.uploaded_file = None
-            st.session_state.search_results = None
+            try:
+                st.session_state.analyzer = BuildingCodeAnalyzer()
+                st.session_state.uploaded_file = None
+                st.session_state.search_results = None
+            except Exception as e:
+                st.error(f"Error initializing application: {str(e)}")
+                return
 
         # Main content area
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.subheader("Search Components")
-            search_query = st.text_input(
-                "Enter your search query",
-                placeholder="e.g., wall height requirements, door dimensions, foundation specifications"
-            )
+        try:
+            col1, col2 = st.columns([2, 1])
             
-            if st.button("Search", type="primary"):
-                if search_query:
-                    results = st.session_state.analyzer.search(search_query)
-                    st.session_state.analyzer.display_results(results)
-                else:
-                    st.warning("Please enter a search query")
-            
-            # Search tips
-            with st.expander("💡 Search Tips"):
-                st.markdown("""
-                You can search by:
-                - Component names (wall, door, foundation)
-                - Component types (structural, utilities, architectural)
-                - Specifications (height, width, depth)
-                - Materials (concrete, steel, wood)
-                - Requirements (minimum, maximum, required)
+            with col1:
+                st.subheader("Search Components")
+                search_query = st.text_input(
+                    "Enter your search query",
+                    placeholder="e.g., wall height requirements, door dimensions, foundation specifications"
+                )
                 
-                Examples:
-                - "wall height requirements"
-                - "door dimensions"
-                - "concrete foundation"
-                - "minimum ceiling height"
-                """)
+                if st.button("Search", type="primary"):
+                    if search_query:
+                        try:
+                            with st.spinner('Searching...'):
+                                results = st.session_state.analyzer.search(search_query)
+                                st.session_state.analyzer.display_results(results)
+                        except Exception as e:
+                            st.error(f"Error during search: {str(e)}")
+                    else:
+                        st.warning("Please enter a search query")
+                
+                # Search tips
+                with st.expander("💡 Search Tips"):
+                    st.markdown("""
+                    You can search by:
+                    - Component names (wall, door, foundation)
+                    - Component types (structural, utilities, architectural)
+                    - Specifications (height, width, depth)
+                    - Materials (concrete, steel, wood)
+                    - Requirements (minimum, maximum, required)
+                    
+                    Examples:
+                    - "wall height requirements"
+                    - "door dimensions"
+                    - "concrete foundation"
+                    - "minimum ceiling height"
+                    """)
+        except Exception as e:
+            st.error(f"Error in main content area: {str(e)}")
         
         # Sidebar for file upload and component overview
-        with st.sidebar:
-            st.header("Upload Component Data")
-            uploaded_file = st.file_uploader(
-                "Upload JSON file",
-                type="json",
-                help="Upload a JSON file containing building component data"
-            )
-            
-            if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
-                try:
-                    with st.spinner('Processing data...'):
-                        st.session_state.uploaded_file = uploaded_file
-                        file_contents = uploaded_file.read().decode("utf-8")
-                        if st.session_state.analyzer.load_file(file_contents):
-                            st.success("File loaded successfully!")
-                            
-                            # Display component statistics
-                            st.subheader("Component Statistics")
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Total Components", len(st.session_state.analyzer.components))
-                                st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
-                            with col2:
-                                st.metric("Quantities", len(st.session_state.analyzer.quantities))
-                            
-                            # Display component types
-                            st.subheader("Component Types")
-                            component_types = {}
-                            for comp in st.session_state.analyzer.components.values():
-                                comp_type = comp["type"]
-                                component_types[comp_type] = component_types.get(comp_type, 0) + 1
-                            
-                            for comp_type, count in component_types.items():
-                                st.write(f"- {comp_type}: {count} components")
-                        else:
-                            st.error("Failed to process file")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
+        try:
+            with st.sidebar:
+                st.header("Upload Component Data")
+                uploaded_file = st.file_uploader(
+                    "Upload JSON file",
+                    type="json",
+                    help="Upload a JSON file containing building component data"
+                )
+                
+                if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
+                    try:
+                        with st.spinner('Processing data...'):
+                            st.session_state.uploaded_file = uploaded_file
+                            file_contents = uploaded_file.read().decode("utf-8")
+                            if st.session_state.analyzer.load_file(file_contents):
+                                st.success("File loaded successfully!")
+                                
+                                # Display component statistics safely
+                                try:
+                                    st.subheader("Component Statistics")
+                                    col1, col2 = st.columns(2)
+                                    with col1:
+                                        st.metric("Total Components", len(st.session_state.analyzer.components))
+                                        st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
+                                    with col2:
+                                        st.metric("Quantities", len(st.session_state.analyzer.quantities))
+                                    
+                                    # Display component types
+                                    st.subheader("Component Types")
+                                    component_types = {}
+                                    for comp in st.session_state.analyzer.components.values():
+                                        comp_type = comp.get("type", "Unknown")
+                                        component_types[comp_type] = component_types.get(comp_type, 0) + 1
+                                    
+                                    for comp_type, count in component_types.items():
+                                        st.write(f"- {comp_type}: {count} components")
+                                except Exception as e:
+                                    st.warning(f"Error displaying statistics: {str(e)}")
+                            else:
+                                st.error("Failed to process file")
+                    except Exception as e:
+                        st.error(f"Error processing file: {str(e)}")
+        except Exception as e:
+            st.error(f"Error in sidebar: {str(e)}")
 
     except Exception as e:
         st.error(f"Application error: {str(e)}")
         if st.button("Reset Application"):
-            st.session_state.clear()
-            st.rerun()
+            try:
+                st.session_state.clear()
+                st.rerun()
+            except Exception as reset_error:
+                st.error(f"Error resetting application: {str(reset_error)}")
 
 if __name__ == "__main__":
     main() 
