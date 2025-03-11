@@ -208,6 +208,41 @@ class BuildingCodeAnalyzer:
             self.quantities.clear()
             self.guidelines.clear()
 
+            def extract_component_info(value, path):
+                """Extract numerical values and requirements from a value."""
+                info = {
+                    "numerical_values": [],
+                    "requirements": [],
+                    "materials": [],
+                    "dimensions": [],
+                    "specifications": []
+                }
+                
+                if isinstance(value, str):
+                    # Extract numerical values with units
+                    numerical = re.findall(
+                        r"(\d+(?:\.\d+)?)\s*(mm|cm|m|ft|in|%|degrees?|MPa|PSI|kN|kPa|m²|m³|ft²|ft³|kW|A)", 
+                        value.lower()
+                    )
+                    for num, unit in numerical:
+                        if unit in ["mm", "cm", "m", "ft", "in"]:
+                            info["dimensions"].append({"value": float(num), "unit": unit})
+                        else:
+                            info["specifications"].append({"value": float(num), "unit": unit})
+                    
+                    # Extract materials
+                    materials = ["concrete", "steel", "timber", "wood", "brick", "metal", 
+                               "aluminum", "copper", "pvc", "glass", "plasterboard", "insulation"]
+                    found_materials = [m for m in materials if m in value.lower()]
+                    if found_materials:
+                        info["materials"].extend(found_materials)
+                    
+                    # Extract requirements
+                    if any(word in value.lower() for word in ["must", "shall", "should", "require", "minimum", "maximum"]):
+                        info["requirements"].append(value)
+                
+                return info
+
             def recurse(d, parent=""):
                 if not isinstance(d, (dict, list)):
                     return
@@ -216,10 +251,12 @@ class BuildingCodeAnalyzer:
                     for k, v in d.items():
                         try:
                             key = f"{parent}.{k}" if parent else k
+                            
                             # Store component info
-                            self.components[key] = {
+                            component_info = {
                                 "name": k,
-                                "type": self.detect_component_type(k)
+                                "type": self.detect_component_type(k),
+                                "path": key
                             }
                             
                             # Process values
@@ -229,11 +266,17 @@ class BuildingCodeAnalyzer:
                                     "unit": "units",
                                     "component": key
                                 }
+                                component_info["quantity"] = {"value": v, "unit": "units"}
                             elif isinstance(v, str):
+                                extracted_info = extract_component_info(v, key)
+                                component_info.update(extracted_info)
                                 self.guidelines[key] = {
                                     "description": v,
-                                    "component": key
+                                    "component": key,
+                                    **extracted_info
                                 }
+                            
+                            self.components[key] = component_info
                             
                             # Recurse into nested structures
                             if isinstance(v, (dict, list)):
@@ -272,6 +315,10 @@ class BuildingCodeAnalyzer:
                 return "Structural"
             if any(x in key_lower for x in ["electrical", "plumbing", "hvac", "mechanical", "utility"]):
                 return "Utilities"
+            if any(x in key_lower for x in ["door", "window", "stairs", "elevator"]):
+                return "Architectural"
+            if any(x in key_lower for x in ["fire", "safety", "emergency", "exit"]):
+                return "Safety"
             return "General"
         except Exception as e:
             st.warning(f"Error detecting component type for '{key}': {str(e)}")
@@ -664,70 +711,62 @@ class BuildingCodeAnalyzer:
             st.warning("No matching components found.")
             return
 
-        st.write(f"Found {len(results)} matching requirements:")
+        st.write(f"Found {len(results)} matching components:")
         
-        # Group results by location
-        results_by_location = {}
+        # Group results by component type
+        results_by_type = {}
         for result in results:
-            location = result.get("location", "Unknown Location")
-            if location not in results_by_location:
-                results_by_location[location] = []
-            results_by_location[location].append(result)
+            comp_type = result["type"]
+            if comp_type not in results_by_type:
+                results_by_type[comp_type] = []
+            results_by_type[comp_type].append(result)
         
-        # Display results organized by location
-        for location, location_results in results_by_location.items():
-            st.subheader(f"📍 {location}")
+        # Display results organized by type
+        for comp_type, type_results in results_by_type.items():
+            st.subheader(f"{comp_type} Components")
             
-            # Group by component
-            results_by_component = {}
-            for result in location_results:
-                component = result["component"]
-                if component not in results_by_component:
-                    results_by_component[component] = []
-                results_by_component[component].append(result)
-            
-            for component, component_results in results_by_component.items():
-                with st.expander(f"Component: {component}"):
-                    # Display description first (if from IFC database)
-                    for result in component_results:
-                        if "description" in result:
-                            st.write("📝 **Description:**")
-                            st.write(result["description"])
-                            break
+            for result in type_results:
+                with st.expander(f"Component: {result['component']}"):
+                    # Display match context
+                    st.caption(f"Matched by: {', '.join(result['match_context'])}")
                     
-                    # Display numerical values
-                    numerical_values = []
-                    for result in component_results:
-                        if "numerical_values" in result:
-                            numerical_values.extend([
-                                {"value": float(value), "unit": unit, "context": result["context"]}
-                                for value, unit in result["numerical_values"]
-                            ])
+                    # Display description if available
+                    if "description" in result:
+                        st.write("📝 **Description:**")
+                        st.write(result["description"])
                     
-                    if numerical_values:
-                        st.write("📏 **Specifications:**")
-                        for spec in numerical_values:
-                            st.write(f"- {spec['value']} {spec['unit']} ({spec['context']})")
+                    # Display details
+                    if "details" in result:
+                        details = result["details"]
+                        
+                        # Display dimensions
+                        if "dimensions" in details and details["dimensions"]:
+                            st.write("📏 **Dimensions:**")
+                            for dim in details["dimensions"]:
+                                st.write(f"- {dim['value']} {dim['unit']}")
+                        
+                        # Display specifications
+                        if "specifications" in details and details["specifications"]:
+                            st.write("⚙️ **Specifications:**")
+                            for spec in details["specifications"]:
+                                st.write(f"- {spec['value']} {spec['unit']}")
+                        
+                        # Display materials
+                        if "materials" in details and details["materials"]:
+                            st.write("🔨 **Materials:**")
+                            for material in details["materials"]:
+                                st.write(f"- {material}")
+                        
+                        # Display requirements
+                        if "requirements" in details and details["requirements"]:
+                            st.write("📋 **Requirements:**")
+                            for req in details["requirements"]:
+                                st.write(f"- {req}")
                     
-                    # Display requirements
-                    requirements = []
-                    for result in component_results:
-                        if "requirement" in result:
-                            requirements.append(f"- {result['requirement']}: {result['value']}")
-                        elif "requirements" in result and result["requirements"]:
-                            requirements.extend([f"- {req}" for req in result["requirements"]])
-                        elif "value" in result and isinstance(result["value"], str):
-                            requirements.append(f"- {result['value']}")
-                    
-                    if requirements:
-                        st.write("📋 **Requirements:**")
-                        for req in requirements:
-                            st.write(req)
-                    
-                    # Show reference paths
-                    with st.expander("🔗 Reference Paths"):
-                        for result in component_results:
-                            st.code(result["path"])
+                    # Display quantity if available
+                    if "quantity" in result:
+                        st.write("🔢 **Quantity:**")
+                        st.write(f"- {result['quantity']['value']} {result['quantity']['unit']}")
 
 def main():
     try:
@@ -739,175 +778,89 @@ def main():
 
         st.title("Building Code Analyzer 🏗️")
 
-        # Initialize session state safely
+        # Initialize session state
         if 'analyzer' not in st.session_state:
             st.session_state.analyzer = BuildingCodeAnalyzer()
             st.session_state.uploaded_file = None
             st.session_state.search_results = None
-            st.session_state.last_search = None
-            st.session_state.selected_location = None
 
-        # Main content - Search interface first
-        st.subheader("Search Building Requirements")
-        
-        # Location selector and search
-        col1, col2, col3 = st.columns([2, 1, 1])
+        # Main content area
+        col1, col2 = st.columns([2, 1])
         
         with col1:
-            search_term = st.text_input(
-                "Enter your question",
-                placeholder="e.g., what are the height requirements for a door in California?",
-                help="You can ask about specific requirements like height, width, or any other specifications for building components."
+            st.subheader("Search Components")
+            search_query = st.text_input(
+                "Enter your search query",
+                placeholder="e.g., wall height requirements, door dimensions, foundation specifications"
             )
-        
-        with col2:
-            locations = ["All Locations"] + sorted(list(st.session_state.analyzer.building_codes.keys()))
-            selected_location = st.selectbox(
-                "Select Location",
-                locations,
-                index=0
-            )
-            st.session_state.selected_location = None if selected_location == "All Locations" else selected_location
-        
-        with col3:
-            search_button = st.button("Search", type="primary", use_container_width=True)
-        
-        # Add search tips
-        with st.expander("💡 Search Tips"):
-            st.markdown("""
-            You can search by asking questions like:
-            - What are the height requirements for doors in California?
-            - What is the minimum ceiling height for bedrooms?
-            - What are the window specifications for bathrooms?
-            - What are the fire rating requirements for walls?
             
-            Include specific details in your question:
-            - Component (door, window, wall, etc.)
-            - Requirement (height, width, rating, etc.)
-            - Location (if specific to a region)
-            """)
-        
-        if search_button and search_term:
-            try:
-                results = []
-                
-                # First, search building codes if a location is selected
-                if st.session_state.selected_location or "code" in search_term.lower():
-                    code_results = st.session_state.analyzer.search_building_codes(
-                        search_term,
-                        st.session_state.selected_location
-                    )
-                    if code_results:
-                        results.extend(code_results)
-                
-                # Then, search component data if available
-                if hasattr(st.session_state.analyzer, 'components') and st.session_state.analyzer.components:
-                    component_results = st.session_state.analyzer._base_search(search_term)
-                    if component_results:
-                        # Add dataset info to component results
-                        for result in component_results:
-                            result["dataset"] = "Component Data"
-                        results.extend(component_results)
-                
-                # Finally, search IFC database
-                ifc_results = st.session_state.analyzer.search_ifc_database(search_term)
-                if ifc_results:
-                    results.extend(ifc_results)
-                
-                if results:
-                    st.session_state.search_results = results
+            if st.button("Search", type="primary"):
+                if search_query:
+                    results = st.session_state.analyzer.search(search_query)
                     st.session_state.analyzer.display_results(results)
                 else:
-                    st.info("No results found. Try adjusting your search terms or check the search tips.")
-            except Exception as e:
-                st.error(f"Search error: {str(e)}")
-                st.info("Please try rephrasing your search or check the search tips.")
-
-        # Sidebar - Show available building codes and upload options
+                    st.warning("Please enter a search query")
+            
+            # Search tips
+            with st.expander("💡 Search Tips"):
+                st.markdown("""
+                You can search by:
+                - Component names (wall, door, foundation)
+                - Component types (structural, utilities, architectural)
+                - Specifications (height, width, depth)
+                - Materials (concrete, steel, wood)
+                - Requirements (minimum, maximum, required)
+                
+                Examples:
+                - "wall height requirements"
+                - "door dimensions"
+                - "concrete foundation"
+                - "minimum ceiling height"
+                """)
+        
+        # Sidebar for file upload and component overview
         with st.sidebar:
-            # Show available building codes
-            st.header("Available Building Codes")
-            st.session_state.analyzer.display_building_code_info()
+            st.header("Upload Component Data")
+            uploaded_file = st.file_uploader(
+                "Upload JSON file",
+                type="json",
+                help="Upload a JSON file containing building component data"
+            )
             
-            st.markdown("---")
-            
-            # Upload options - separate sections for building codes and component data
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.header("Add Building Code")
-                st.markdown("""
-                Upload building code files in JSON format.
-                File name should be the location (e.g., `california.json`).
-                """)
-                
-                new_code_file = st.file_uploader("Upload Building Code", type="json", key="code_uploader")
-                
-                if new_code_file is not None:
-                    try:
-                        with st.spinner('Loading building code...'):
-                            file_contents = new_code_file.read().decode("utf-8")
-                            # Save to building_codes directory
-                            filename = new_code_file.name
-                            location = os.path.splitext(filename)[0].replace('_', ' ').title()
+            if uploaded_file is not None and (st.session_state.uploaded_file != uploaded_file):
+                try:
+                    with st.spinner('Processing data...'):
+                        st.session_state.uploaded_file = uploaded_file
+                        file_contents = uploaded_file.read().decode("utf-8")
+                        if st.session_state.analyzer.load_file(file_contents):
+                            st.success("File loaded successfully!")
                             
-                            # Save the file
-                            codes_dir = os.path.join(os.path.dirname(__file__), 'data', 'building_codes')
-                            if not os.path.exists(codes_dir):
-                                os.makedirs(codes_dir)
-                            
-                            file_path = os.path.join(codes_dir, filename)
-                            with open(file_path, 'w') as f:
-                                f.write(file_contents)
-                            
-                            # Reload building codes
-                            st.session_state.analyzer.load_building_codes()
-                            st.success(f"Building code for {location} loaded successfully!")
-                            time.sleep(1)
-                            st.rerun()
-                    except Exception as e:
-                        st.error(f"Error loading building code: {str(e)}")
-            
-            with col2:
-                st.header("Add Component Data")
-                st.markdown("""
-                Upload component data files in JSON format.
-                Contains detailed component information.
-                """)
-                
-                component_file = st.file_uploader("Upload Component Data", type="json", key="component_uploader")
-                
-                if component_file is not None and (st.session_state.uploaded_file != component_file):
-                    try:
-                        with st.spinner('Loading component data...'):
-                            st.session_state.uploaded_file = component_file
-                            file_contents = component_file.read().decode("utf-8")
-                            if st.session_state.analyzer.load_file(file_contents):
-                                st.success("Component data loaded successfully!")
-                                # Display component statistics
-                                st.metric("Components", len(st.session_state.analyzer.components))
+                            # Display component statistics
+                            st.subheader("Component Statistics")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Total Components", len(st.session_state.analyzer.components))
                                 st.metric("Guidelines", len(st.session_state.analyzer.guidelines))
+                            with col2:
                                 st.metric("Quantities", len(st.session_state.analyzer.quantities))
-                            else:
-                                st.error("Failed to process component data. Please check the file format.")
-                    except json.JSONDecodeError:
-                        st.error("Invalid JSON file. Please check the file format.")
-                    except Exception as e:
-                        st.error(f"Error loading component data: {str(e)}")
-            
-            # Add IFC database statistics
-            st.markdown("---")
-            st.header("IFC Database")
-            try:
-                st.metric("Available IFC Components", len(st.session_state.analyzer.ifc_database))
-            except Exception as e:
-                st.error("Error accessing IFC database")
-                st.session_state.analyzer = BuildingCodeAnalyzer()
+                            
+                            # Display component types
+                            st.subheader("Component Types")
+                            component_types = {}
+                            for comp in st.session_state.analyzer.components.values():
+                                comp_type = comp["type"]
+                                component_types[comp_type] = component_types.get(comp_type, 0) + 1
+                            
+                            for comp_type, count in component_types.items():
+                                st.write(f"- {comp_type}: {count} components")
+                        else:
+                            st.error("Failed to process file")
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
 
     except Exception as e:
-        st.error(f"Application error occurred: {str(e)}")
-        st.info("Please refresh the page to restart the application.")
-        if st.button("Clear Session State and Refresh"):
+        st.error(f"Application error: {str(e)}")
+        if st.button("Reset Application"):
             st.session_state.clear()
             st.rerun()
 
