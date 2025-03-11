@@ -448,7 +448,10 @@ class BuildingCodeAnalyzer:
         results = []
         query_terms = term.lower().split()
         
-        for comp_key, comp_data in self.components.items():
+        # Create a copy of components to iterate over
+        components_to_search = dict(self.components)
+        
+        for comp_key, comp_data in components_to_search.items():
             should_include = False
             
             # Check component name and path
@@ -492,6 +495,16 @@ class BuildingCodeAnalyzer:
                     result["description"] = self.guidelines[comp_key]["description"]
                 
                 results.append(result)
+        
+        # Also search in IFC database
+        ifc_results = self.search_ifc_database(term)
+        if ifc_results:
+            results.extend(ifc_results)
+            
+        # Search building codes if available
+        building_code_results = self.search_building_codes(term)
+        if building_code_results:
+            results.extend(building_code_results)
         
         return results
 
