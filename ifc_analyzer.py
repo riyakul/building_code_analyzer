@@ -3,38 +3,55 @@ import json
 import re
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple, Any
 import ifcopenshell
 import plotly.graph_objects as go
 from sklearn.feature_extraction.text import TfidfVectorizer
 import nltk
 from nltk.tokenize import word_tokenize
+from nltk.stem import WordNetLemmatizer
 from nltk.corpus import stopwords
+from nltk.chunk import ne_chunk
+from nltk.tag import pos_tag
+import spacy
 import os
 
 # Download required NLTK data with error handling
 def download_nltk_data():
     try:
         nltk.data.find('tokenizers/punkt')
+        nltk.data.find('corpora/stopwords')
+        nltk.data.find('taggers/averaged_perceptron_tagger')
+        nltk.data.find('corpora/wordnet')
     except LookupError:
         try:
             nltk.download('punkt', quiet=True)
-        except Exception as e:
-            st.error(f"Error downloading NLTK punkt: {str(e)}")
-            
-    try:
-        nltk.data.find('corpora/stopwords')
-    except LookupError:
-        try:
             nltk.download('stopwords', quiet=True)
+            nltk.download('averaged_perceptron_tagger', quiet=True)
+            nltk.download('wordnet', quiet=True)
+            nltk.download('maxent_ne_chunker', quiet=True)
+            nltk.download('words', quiet=True)
         except Exception as e:
-            st.error(f"Error downloading NLTK stopwords: {str(e)}")
+            st.error(f"Error downloading NLTK data: {str(e)}")
 
 # Download NLTK data at startup
 download_nltk_data()
 
 class IFCAnalyzer:
     def __init__(self):
+        self.lemmatizer = WordNetLemmatizer()
+        self.stop_words = set(stopwords.words('english'))
+        self.component_types = set([
+            "wall", "door", "window", "slab", "beam", "column", "stair",
+            "roof", "space", "zone", "pipe", "duct", "fixture"
+        ])
+        self.attribute_keywords = {
+            "dimension": ["height", "width", "length", "thickness", "diameter", "radius"],
+            "location": ["position", "placement", "coordinate", "location", "elevation"],
+            "material": ["material", "composition", "made of", "constructed from"],
+            "performance": ["rating", "class", "grade", "performance"],
+            "relationship": ["connected", "adjacent", "attached", "contains", "supports"]
+        }
         self.locations = {
             "California": {
                 "code_version": "2022 California Building Code",
@@ -728,112 +745,187 @@ class IFCAnalyzer:
             st.error(f"Error processing JSON file: {str(e)}")
             return False
     
-    def search(self, query: str) -> List[Dict]:
-        """Enhanced search through IFC schema and uploaded data."""
-        try:
-            results = []
-            
-            # Clean and process query
-            query = query.lower()
-            try:
-                tokens = word_tokenize(query)
-                stop_words = set(stopwords.words('english'))
-                tokens = [w for w in tokens if w not in stop_words]
-            except LookupError:
-                tokens = query.split()
-                stop_words = {'a', 'an', 'the', 'in', 'on', 'at', 'for', 'to', 'of', 'with', 'by'}
-                tokens = [w for w in tokens if w not in stop_words]
-            
-            # Extract search categories
-            categories = {
-                'component': sum([[k.lower(), k[3:].lower()] for k in self.ifc_schema.keys()], []),
-                'property': sum([schema["properties"] for schema in self.ifc_schema.values()], []),
-                'quantity': sum([schema["quantities"] for schema in self.ifc_schema.values()], []),
-                'requirement': sum([list(schema.get("requirements", {}).keys()) for schema in self.ifc_schema.values()], []),
-                'attribute': sum([schema["attributes"] for schema in self.ifc_schema.values()], [])
-            }
-            
-            # Identify search focus
-            search_focus = {
-                category: [term for term in tokens if any(term in item.lower() for item in items)]
-                for category, items in categories.items()
-            }
-            
-            # Search in IFC schema
-            for component_type, schema in self.ifc_schema.items():
-                should_include = False
-                component_name = component_type[3:].lower()
-                
-                # Check if component matches search
-                if (not any(search_focus.values()) or  # Include if no specific focus
-                    search_focus['component'] and any(term in component_name for term in search_focus['component']) or
-                    any(any(term in item.lower() for item in schema.get(cat, [])) 
-                        for cat, terms in search_focus.items() if terms and cat != 'component')):
-                    
-                    result = {
-                        "type": component_type,
-                        "name": f"Standard {component_type[3:]}",
-                        "source": "Building Code",
-                        "matched_on": [],
-                        "details": {}
-                    }
-                    
-                    # Include relevant information based on search focus
-                    if schema.get("requirements"):
-                        result["details"]["Requirements"] = schema["requirements"]
-                        
-                    if schema.get("properties"):
-                        result["details"]["Properties"] = {
-                            prop: self.property_units.get(prop, "-")
-                            for prop in schema["properties"]
-                        }
-                        
-                    if schema.get("quantities"):
-                        result["details"]["Quantities"] = {
-                            qty: self.property_units.get(qty, "-")
-                            for qty in schema["quantities"]
-                        }
-                        
-                    if schema.get("relationships"):
-                        result["details"]["Relationships"] = schema["relationships"]
-                        
-                    results.append(result)
-            
-            # Search in uploaded JSON data if available
-            if self.user_data:
-                for key, value in self.user_data.items():
-                    if isinstance(value, dict) and any(term in key.lower() for term in tokens):
-                        results.append({
-                            "type": "UserComponent",
-                            "name": key,
-                            "source": "Uploaded Data",
-                            "details": value
-                        })
-            
-            return results
-        except Exception as e:
-            st.error(f"Error in search: {str(e)}")
-            return []
-    
-    def get_component_template(self, component_type: str) -> Dict:
-        """Get template information for a specific component type."""
-        try:
-            if component_type in self.ifc_schema:
-                return {
+    def preprocess_query(self, query: str) -> Tuple[List[str], Dict[str, Any]]:
+        """
+        Enhanced query preprocessing with entity recognition and attribute extraction
+        """
+        # Tokenize and lemmatize
+        tokens = word_tokenize(query.lower())
+        lemmatized = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
+        
+        # Extract named entities and patterns
+        tagged = pos_tag(tokens)
+        entities = ne_chunk(tagged)
+        
+        # Identify components and attributes
+        components = []
+        attributes = {}
+        
+        for token in lemmatized:
+            if token in self.component_types:
+                components.append(token)
+        
+        # Extract numerical values with units
+        numerical_pattern = r'(\d+(?:\.\d+)?)\s*(feet|ft|meters|m|inches|in|mm|cm)'
+        numerical_values = re.findall(numerical_pattern, query)
+        
+        # Identify requested attributes
+        for category, keywords in self.attribute_keywords.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                attributes[category] = True
+        
+        return components, {
+            "attributes": attributes,
+            "numerical_values": numerical_values,
+            "entities": entities
+        }
+
+    def format_component_data(self, component: Dict[str, Any], include_details: bool = True) -> str:
+        """
+        Enhanced component data formatting with detailed information
+        """
+        details = []
+        
+        # Basic information
+        if "Name" in component:
+            details.append(f"**Name:** {component['Name']}")
+        if "Description" in component:
+            details.append(f"**Description:** {component['Description']}")
+        
+        # Numerical values and dimensions
+        if "dimensions" in component:
+            details.append("\n**Dimensions:**")
+            for dim, value in component["dimensions"].items():
+                details.append(f"- {dim}: {value}")
+        
+        # Location and placement
+        if "placement" in component:
+            details.append("\n**Spatial Placement:**")
+            placement = component["placement"]
+            details.append(f"- Location: ({placement.get('x', 0)}, {placement.get('y', 0)}, {placement.get('z', 0)})")
+            if "rotation" in placement:
+                details.append(f"- Rotation: {placement['rotation']} degrees")
+        
+        # Material properties
+        if "material" in component:
+            details.append("\n**Material Properties:**")
+            for prop, value in component["material"].items():
+                details.append(f"- {prop}: {value}")
+        
+        # Performance ratings
+        if "ratings" in component:
+            details.append("\n**Performance Ratings:**")
+            for rating, value in component["ratings"].items():
+                details.append(f"- {rating}: {value}")
+        
+        # Relationships
+        if "relationships" in component:
+            details.append("\n**Component Relationships:**")
+            for rel in component["relationships"]:
+                details.append(f"- {rel}")
+        
+        # Code requirements and compliance
+        if "requirements" in component:
+            details.append("\n**Building Code Requirements:**")
+            for req, data in component["requirements"].items():
+                details.append(f"- {req}:")
+                details.append(f"  - Required: {data['value']}")
+                details.append(f"  - Reference: {data['code_reference']}")
+                if "compliance" in data:
+                    details.append(f"  - Compliance: {data['compliance']}")
+        
+        return "\n".join(details)
+
+    def search_components(self, query: str) -> List[Dict[str, Any]]:
+        """
+        Enhanced component search with detailed attribute matching
+        """
+        components, query_info = self.preprocess_query(query)
+        results = []
+        
+        # Search through IFC schema and match components
+        for component_type, data in self.ifc_schema.items():
+            component_name = component_type.replace("Ifc", "").lower()
+            if not components or component_name in components:
+                # Create detailed component information
+                component_info = {
                     "type": component_type,
-                    "required_properties": self.ifc_schema[component_type]["properties"],
-                    "required_quantities": self.ifc_schema[component_type]["quantities"],
-                    "relationships": self.ifc_schema[component_type]["relationships"],
-                    "units": {prop: self.property_units.get(prop, "undefined") 
-                            for prop in self.ifc_schema[component_type]["properties"]}
+                    "attributes": data.get("attributes", {}),
+                    "properties": data.get("properties", {}),
+                    "quantities": data.get("quantities", {}),
+                    "relationships": data.get("relationships", []),
+                    "requirements": data.get("requirements", {})
                 }
-            return {}
-        except Exception as e:
-            st.error(f"Error getting component template: {str(e)}")
-            return {}
+                
+                # Add placement information
+                component_info["placement"] = {
+                    "x": 0.0,  # Replace with actual values from IFC file
+                    "y": 0.0,
+                    "z": 0.0,
+                    "rotation": 0.0
+                }
+                
+                # Match requested attributes
+                if query_info["attributes"]:
+                    for category in query_info["attributes"]:
+                        if category in data:
+                            component_info[category] = data[category]
+                
+                results.append(component_info)
+        
+        return results
+
+    def display_search_results(self, results: List[Dict[str, Any]]):
+        """
+        Enhanced search results display with detailed information
+        """
+        if not results:
+            st.warning("No components found matching your search criteria.")
+            return
+        
+        for i, result in enumerate(results):
+            with st.expander(f"{result['type']} Details", expanded=True):
+                # Display formatted component data
+                st.markdown(self.format_component_data(result))
+                
+                # Add visual representation if available
+                if "geometry" in result:
+                    st.plotly_chart(self.create_3d_visualization(result))
+                
+                # Show compliance status
+                if "requirements" in result:
+                    self.display_compliance_status(result["requirements"])
+
+    def display_compliance_status(self, requirements: Dict[str, Any]):
+        """
+        Display component compliance status with building codes
+        """
+        st.subheader("Code Compliance Status")
+        
+        for req, data in requirements.items():
+            status = data.get("compliance", "Unknown")
+            if status == "Compliant":
+                status_color = "green"
+            elif status == "Non-compliant":
+                status_color = "red"
+            else:
+                status_color = "yellow"
+            
+            st.markdown(f"""
+                <div style='padding: 10px; border-left: 5px solid {status_color};'>
+                    <strong>{req}:</strong><br>
+                    Required: {data['value']}<br>
+                    Status: {status}<br>
+                    Reference: {data['code_reference']}
+                </div>
+            """, unsafe_allow_html=True)
 
 def main():
-    st.set_page_config(page_title="IFC Code Analyzer", page_icon="🏗️", layout="wide")
+    st.set_page_config(
+        page_title="IFC Code Analyzer",
+        page_icon="🏗️",
+        layout="wide"
+    )
     
     st.title("IFC Code Analyzer 🏗️")
     
@@ -841,146 +933,88 @@ def main():
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = IFCAnalyzer()
     
-    # Sidebar
-    st.sidebar.header("Settings")
-    
-    # Location selector
-    location = st.sidebar.selectbox(
-        "Select Location",
-        options=list(st.session_state.analyzer.locations.keys()),
-        index=list(st.session_state.analyzer.locations.keys()).index(st.session_state.analyzer.current_location)
-    )
-    
-    # Update location if changed
-    if location != st.session_state.analyzer.current_location:
-        if st.session_state.analyzer.set_location(location):
-            st.sidebar.success(f"Location updated to {location}")
-            
-    # Display current building code information
-    location_info = st.session_state.analyzer.get_location_info()
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("Building Code Information")
-    st.sidebar.write(f"**Version:** {location_info['code_version']}")
-    st.sidebar.write(f"**Jurisdiction:** {location_info['jurisdiction']}")
-    st.sidebar.write(f"**Units:** {location_info['units'].title()}")
-    
-    st.sidebar.markdown("---")
-    st.sidebar.header("Upload Files")
-    
-    # File upload section
-    uploaded_file = st.sidebar.file_uploader(
-        "Upload JSON file with additional specifications",
-        type=["json"],
-        help="Upload a JSON file containing additional building component data"
-    )
-    
-    if uploaded_file is not None:
-        file_type = uploaded_file.name.split(".")[-1].lower()
-        with st.spinner('Processing file...'):
-            file_contents = uploaded_file.read()
-            if st.session_state.analyzer.load_file(file_contents, file_type):
-                st.sidebar.success("File loaded successfully!")
-            else:
-                st.sidebar.error("Failed to process file")
+    # Sidebar for location selection and file upload
+    with st.sidebar:
+        st.header("Settings")
+        
+        # Location selection
+        location = st.selectbox(
+            "Select Location",
+            options=list(st.session_state.analyzer.locations.keys()),
+            index=0
+        )
+        st.session_state.analyzer.current_location = location
+        
+        # File upload section
+        st.header("File Upload")
+        uploaded_file = st.file_uploader("Upload IFC or JSON file", type=['ifc', 'json'])
+        
+        if uploaded_file:
+            try:
+                if uploaded_file.type == "application/json":
+                    st.session_state.analyzer.load_json_data(uploaded_file)
+                else:
+                    st.session_state.analyzer.load_ifc_file(uploaded_file)
+                st.success("File loaded successfully!")
+            except Exception as e:
+                st.error(f"Error loading file: {str(e)}")
     
     # Main content area
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.subheader("Search Building Components")
+        st.header("Component Search")
         search_query = st.text_input(
-            "Enter your search query",
-            placeholder="e.g., show me standpipe dimensions, wall requirements, door specifications"
+            "Search for components and requirements",
+            placeholder="Example: 'Show me wall requirements with height greater than 10 feet'"
         )
         
-        if st.button("Search", type="primary"):
-            if search_query:
-                with st.spinner('Searching...'):
-                    results = st.session_state.analyzer.search(search_query)
-                    if results:
-                        st.write(f"Found {len(results)} matching components:")
-                        
-                        # Group results by source
-                        code_results = [r for r in results if r['source'] == 'Building Code']
-                        user_results = [r for r in results if r['source'] == 'Uploaded Data']
-                        
-                        # Display building code requirements
-                        if code_results:
-                            st.subheader("Building Code Requirements")
-                            for result in code_results:
-                                with st.expander(f"{result['name']} Requirements"):
-                                    # Display requirements with code references
-                                    if result.get('details') and result['details'].get('Requirements'):
-                                        st.write("**Code Requirements:**")
-                                        for req_name, req_info in result['details']['Requirements'].items():
-                                            st.markdown(f"""
-                                            ##### {req_name}
-                                            - **Value:** {req_info['value']}
-                                            - **Description:** {req_info['description']}
-                                            - **Code Reference:** {req_info['code_reference']}
-                                            """)
-                                    
-                                    # Display component information
-                                    schema = st.session_state.analyzer.ifc_schema.get(result['type'], {})
-                                    
-                                    # Show attributes
-                                    if schema.get('attributes'):
-                                        st.write("\n**Attributes:**")
-                                        st.write(", ".join(schema['attributes']))
-                                    
-                                    # Show properties with units
-                                    if schema.get('details') and schema['details'].get('Properties'):
-                                        st.write("\n**Properties:**")
-                                        props_with_units = []
-                                        for prop, unit in schema['details']['Properties'].items():
-                                            props_with_units.append(f"{prop} ({unit})")
-                                        st.write(", ".join(props_with_units))
-                                    
-                                    # Show quantities
-                                    if schema.get('details') and schema['details'].get('Quantities'):
-                                        st.write("\n**Quantities:**")
-                                        quantities_with_units = []
-                                        for qty, unit in schema['details']['Quantities'].items():
-                                            quantities_with_units.append(f"{qty} ({unit})")
-                                        st.write(", ".join(quantities_with_units))
-                                    
-                                    # Show relationships
-                                    if schema.get('details') and schema['details'].get('Relationships'):
-                                        st.write("\n**Relationships:**")
-                                        st.write(", ".join(schema['details']['Relationships']))
-                        
-                        # Display user-uploaded data
-                        if user_results:
-                            st.subheader("Additional Specifications (from uploaded data)")
-                            for result in user_results:
-                                with st.expander(f"{result['name']} Specifications"):
-                                    if isinstance(result['details'], dict):
-                                        props_df = pd.DataFrame(
-                                            [(k, v) for k, v in result['details'].items()],
-                                            columns=["Property", "Value"]
-                                        )
-                                        st.table(props_df)
-                    else:
-                        st.warning("No matching components found.")
-            else:
-                st.warning("Please enter a search query")
+        # Search help
+        with st.expander("Search Help"):
+            st.markdown("""
+            **Search Tips:**
+            - Search for specific components: "wall", "door", "window", etc.
+            - Include dimensions: "walls higher than 10 feet"
+            - Ask about locations: "position of beams"
+            - Query materials: "concrete walls"
+            - Check requirements: "fire rating requirements for doors"
+            - Find relationships: "walls connected to columns"
+            """)
+        
+        if search_query:
+            with st.spinner('Searching...'):
+                results = st.session_state.analyzer.search_components(search_query)
+                st.session_state.analyzer.display_search_results(results)
     
     with col2:
-        st.subheader("Available Components")
-        st.write("The following components can be searched:")
+        st.header("Building Code Reference")
+        code_info = st.session_state.analyzer.locations[location]
+        st.info(f"""
+        **Current Building Code:**
+        - Version: {code_info['code_version']}
+        - Jurisdiction: {code_info['jurisdiction']}
+        - Units: {code_info['units'].capitalize()}
+        """)
         
-        for component_type in st.session_state.analyzer.ifc_schema.keys():
-            component_name = component_type[3:]  # Remove 'Ifc' prefix
-            with st.expander(component_name):
-                schema = st.session_state.analyzer.ifc_schema[component_type]
-                
-                st.write("**Properties:**")
-                st.write(", ".join(schema['properties']))
-                
-                if schema.get('requirements'):
-                    st.write("\n**Requirements:**")
-                    for req_name, req_value in schema['requirements'].items():
-                        st.write(f"- **{req_name}:** {req_value}")
+        # Component quick reference
+        st.subheader("Component Quick Reference")
+        component_type = st.selectbox(
+            "Select Component Type",
+            options=[k for k in st.session_state.analyzer.ifc_schema.keys()]
+        )
+        
+        if component_type:
+            component_data = st.session_state.analyzer.ifc_schema[component_type]
+            st.markdown(f"### {component_type} Requirements")
+            
+            if "requirements" in component_data:
+                for req_name, req_data in component_data["requirements"].items():
+                    st.markdown(f"""
+                    **{req_name}**
+                    - Value: {req_data['value']}
+                    - {req_data['description']}
+                    - Reference: {req_data['code_reference']}
+                    """)
 
 if __name__ == "__main__":
     main() 
