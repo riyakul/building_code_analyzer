@@ -1,22 +1,27 @@
-# IFC Code Analyzer
+# IFC Code Analyzer 🏗️
 
-A Streamlit web application for analyzing IFC (Industry Foundation Classes) files and extracting building component information.
+A Streamlit web application for analyzing building components from IFC files and building codes. The application provides a comprehensive interface to search and view building code requirements, component specifications, and relationships based on IFC schema.
 
 ## Features
 
-- Upload and analyze IFC files
-- Upload and analyze JSON files with building component data
-- Natural language search queries for components
-- Extract quantitative information and specifications
-- View component templates and requirements
-- Display relationships between building elements
+- **Component Search**: Natural language search for building components and their requirements
+- **Building Code Integration**: Access building code requirements for various components
+- **Multiple Locations**: Support for different jurisdictions (California, New York, Texas, International)
+- **IFC Schema Support**: Comprehensive IFC schema implementation including:
+  - Architectural Elements (Walls, Windows, Doors, etc.)
+  - MEP Components (Pipes, Ducts, Light Fixtures, etc.)
+  - Spatial Elements (Spaces, Zones)
+  - Structural Elements (Beams, Columns, Slabs)
+- **Code Requirement Display**: Detailed view of building code requirements with references
+- **Unit Management**: Automatic unit conversion between metric and imperial systems
+- **File Upload**: Support for IFC and JSON file uploads with custom specifications
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/ifc-code-analyzer.git
-cd ifc-code-analyzer
+git clone https://github.com/yourusername/building_code_analyzer.git
+cd building_code_analyzer
 ```
 
 2. Create a virtual environment (optional but recommended):
@@ -32,46 +37,66 @@ pip install -r requirements.txt
 
 ## Usage
 
-1. Start the Streamlit app:
+1. Start the Streamlit application:
 ```bash
 streamlit run ifc_analyzer.py
 ```
 
-2. Open your web browser and navigate to the URL shown in the terminal (usually http://localhost:8501)
+2. Open your web browser and navigate to the provided URL (typically http://localhost:8501)
 
 3. Use the application:
-   - Upload an IFC or JSON file using the sidebar
-   - Enter natural language queries in the search box
-   - View component templates and requirements
-   - Explore extracted information in tables and expandable sections
+   - Select your location from the sidebar
+   - Enter search queries in the search box
+   - Upload IFC or JSON files for custom specifications
+   - View component requirements and specifications
 
-## Query Examples
+## Search Examples
 
-- "Show me all walls with height greater than 3m"
-- "Find beams with specific material properties"
-- "List columns with load-bearing capacity"
-- "Display slab thickness requirements"
+- "Show me wall requirements"
+- "What are the door dimensions"
+- "Show me fire rating requirements for columns"
+- "What are the ventilation requirements for spaces"
+- "Show me sprinkler spacing requirements"
 
-## Supported Components
+## Component Types
 
-- Walls (IfcWall)
-- Beams (IfcBeam)
-- Columns (IfcColumn)
-- Slabs (IfcSlab)
+The application supports various IFC components including:
 
-Each component includes:
-- Properties (dimensions, materials)
-- Quantities (area, volume, weight)
-- Relationships with other building elements
+### Architectural
+- IfcWall
+- IfcWindow
+- IfcDoor
+- IfcStair
+- IfcRoof
+- IfcSlab
+- IfcRailing
+- IfcCurtainWall
+
+### MEP
+- IfcPipe
+- IfcDuctSegment
+- IfcLightFixture
+- IfcSanitaryTerminal
+- IfcFireSuppressionTerminal
+- IfcElectricDistributionBoard
+
+### Spatial
+- IfcSpace
+- IfcZone
+
+### Structural
+- IfcBeam
+- IfcColumn
 
 ## Contributing
 
-1. Fork the repository
-2. Create a new branch for your feature
-3. Commit your changes
-4. Push to your branch
-5. Create a Pull Request
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details. 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- buildingSMART for IFC specifications
+- Various building code authorities for requirements and specifications 

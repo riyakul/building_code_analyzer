@@ -59,42 +59,118 @@ class IFCAnalyzer:
         }
         
         self.current_location = "California"
-        # Extended IFC schema with more components and their requirements
+        # Expanded IFC schema with comprehensive component information
         self.ifc_schema = {
             "IfcWall": {
-                "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Height", "Width", "Length", "Material", "FireRating", "LoadBearing", "Insulation"],
-                "quantities": ["GrossFootprintArea", "NetVolume", "GrossVolume"],
-                "relationships": ["ContainedInStructure", "HasOpenings"],
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Width", "Length", "Material", "FireRating", "LoadBearing", "Insulation", "ThermalTransmittance", "AcousticRating", "Combustible", "SurfaceSpreadOfFlame", "ExtendToStructure", "LoadBearing", "Compartmentation"],
+                "quantities": ["GrossFootprintArea", "NetVolume", "GrossVolume", "NetWeight", "GrossWeight", "GrossSideArea", "NetSideArea"],
+                "relationships": ["ContainedInStructure", "HasOpenings", "ProvidesVoids", "HasCoverings", "HasProjections", "HasAssociations"],
                 "requirements": {
-                    "FireRating": "Minimum 2 hours for load-bearing walls",
-                    "Insulation": "R-value minimum 13 for exterior walls",
-                    "Height": "Maximum height between supports: 20 feet",
-                    "Thickness": "Minimum 4 inches for load-bearing walls"
+                    "FireRating": {
+                        "value": "2 hours",
+                        "description": "Minimum fire rating for load-bearing walls",
+                        "code_reference": "CBC Section 703.2"
+                    },
+                    "Insulation": {
+                        "value": "R-13",
+                        "description": "Minimum R-value for exterior walls",
+                        "code_reference": "CBC Energy Code"
+                    },
+                    "Height": {
+                        "value": "20 feet",
+                        "description": "Maximum height between lateral supports",
+                        "code_reference": "CBC Section 2109.2"
+                    },
+                    "Thickness": {
+                        "value": "4 inches",
+                        "description": "Minimum thickness for load-bearing walls",
+                        "code_reference": "CBC Section 2109.1.1"
+                    },
+                    "AcousticRating": {
+                        "value": "STC 50",
+                        "description": "Minimum Sound Transmission Class rating for dwelling unit separation",
+                        "code_reference": "CBC Section 1206.2"
+                    }
                 }
             },
-            "IfcStandpipe": {
-                "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Diameter", "Material", "PressureRating", "FlowRate"],
-                "quantities": ["Length", "Weight"],
-                "relationships": ["ServesFloor", "ConnectedTo"],
+            "IfcStair": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["NumberOfRiser", "NumberOfTreads", "RiserHeight", "TreadLength", "WalkingLineOffset", "TreadLengthAtOffset", "NosingLength", "WaistThickness", "Material"],
+                "quantities": ["Length", "GrossVolume", "NetVolume", "GrossWeight", "NetWeight"],
+                "relationships": ["ContainedInStructure", "HasCoverings", "HasAssociations"],
                 "requirements": {
-                    "Diameter": "Minimum 4 inches for Class I and III systems",
-                    "PressureRating": "Minimum working pressure 175 psi",
-                    "FlowRate": "Minimum 500 GPM for first standpipe, 250 GPM for each additional",
-                    "Spacing": "Maximum 200 feet between standpipes"
+                    "RiserHeight": {
+                        "value": "4-7 inches",
+                        "description": "Maximum riser height for stairs",
+                        "code_reference": "CBC Section 1011.5.2"
+                    },
+                    "TreadDepth": {
+                        "value": "11 inches minimum",
+                        "description": "Minimum tread depth",
+                        "code_reference": "CBC Section 1011.5.2"
+                    },
+                    "Width": {
+                        "value": "44 inches minimum",
+                        "description": "Minimum width for public stairs",
+                        "code_reference": "CBC Section 1011.2"
+                    },
+                    "Headroom": {
+                        "value": "80 inches minimum",
+                        "description": "Minimum headroom clearance",
+                        "code_reference": "CBC Section 1011.3"
+                    }
                 }
             },
-            "IfcDoor": {
-                "attributes": ["Name", "Description", "ObjectType"],
-                "properties": ["Height", "Width", "FireRating", "AccessibilityCompliant"],
-                "quantities": ["Area"],
-                "relationships": ["ContainedInStructure", "FillsOpening"],
+            "IfcWindow": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Width", "OperationType", "Material", "ThermalTransmittance", "GlazingAreas", "IsExternal", "FireRating", "SecurityRating", "SmokeStop"],
+                "quantities": ["Area", "Weight"],
+                "relationships": ["ContainedInStructure", "FillsVoid", "HasCoverings"],
                 "requirements": {
-                    "Width": "Minimum 32 inches clear width",
-                    "Height": "Minimum 80 inches",
-                    "FireRating": "90 minutes for exit enclosures",
-                    "Threshold": "Maximum 0.5 inches height"
+                    "EmergencyEgress": {
+                        "value": "5.7 sq ft minimum",
+                        "description": "Minimum clear opening area for emergency escape",
+                        "code_reference": "CBC Section 1030.2"
+                    },
+                    "SillHeight": {
+                        "value": "44 inches maximum",
+                        "description": "Maximum sill height from floor",
+                        "code_reference": "CBC Section 1030.3"
+                    },
+                    "OpeningWidth": {
+                        "value": "20 inches minimum",
+                        "description": "Minimum clear opening width",
+                        "code_reference": "CBC Section 1030.2.1"
+                    },
+                    "OpeningHeight": {
+                        "value": "24 inches minimum",
+                        "description": "Minimum clear opening height",
+                        "code_reference": "CBC Section 1030.2.1"
+                    }
+                }
+            },
+            "IfcColumn": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Width", "Depth", "Material", "LoadBearing", "FireRating", "SectionProfile", "StructuralMaterial"],
+                "quantities": ["Length", "CrossSectionArea", "OuterSurfaceArea", "GrossVolume", "NetVolume", "GrossWeight", "NetWeight"],
+                "relationships": ["ContainedInStructure", "HasAssociations", "HasConnections"],
+                "requirements": {
+                    "FireProtection": {
+                        "value": "1-3 hours",
+                        "description": "Fire-resistance rating based on building type",
+                        "code_reference": "CBC Table 601"
+                    },
+                    "Reinforcement": {
+                        "value": "1-4% of gross area",
+                        "description": "Required steel reinforcement for concrete columns",
+                        "code_reference": "ACI 318-19"
+                    },
+                    "TieSpacing": {
+                        "value": "16 bar diameters maximum",
+                        "description": "Maximum spacing of lateral ties",
+                        "code_reference": "ACI 318-19 Section 25.7.2"
+                    }
                 }
             }
         }
@@ -112,12 +188,424 @@ class IFCAnalyzer:
             "PressureRating": "psi",
             "FlowRate": "gpm",
             "LoadBearing": "boolean",
-            "FireRating": "hours"
+            "FireRating": "hours",
+            "ThermalTransmittance": "W/(m²·K)",
+            "NominalDiameter": "mm",
+            "RiserHeight": "inches",
+            "TreadLength": "inches",
+            "NosingLength": "inches",
+            "WaistThickness": "inches",
+            "OpeningArea": "sq ft",
+            "SillHeight": "inches",
+            "OpeningWidth": "inches",
+            "OpeningHeight": "inches",
+            "CrossSectionArea": "sq in",
+            "OuterSurfaceArea": "sq ft",
+            "SectionProfile": "designation",
+            "AcousticRating": "STC",
+            "GlazingAreas": "sq ft"
         }
         
         self.current_file = None
         self.extracted_data = {}
-        self.user_data = {}  # Store uploaded JSON data separately
+        self.user_data = {}
+        
+        self.ifc_schema.update({
+            "IfcBeam": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Width", "Length", "Material", "LoadBearing", "FireRating", "SectionProfile", "StructuralMaterial", "SpanLength", "RollRadius", "Slope"],
+                "quantities": ["Length", "CrossSectionArea", "OuterSurfaceArea", "GrossVolume", "NetVolume", "GrossWeight", "NetWeight"],
+                "relationships": ["ContainedInStructure", "HasAssociations", "HasConnections", "HasCoverings"],
+                "requirements": {
+                    "FireProtection": {
+                        "value": "1-3 hours",
+                        "description": "Fire-resistance rating based on building type",
+                        "code_reference": "CBC Table 601"
+                    },
+                    "LoadBearing": {
+                        "value": "Required",
+                        "description": "Must be designed to support structural loads",
+                        "code_reference": "CBC Section 1604"
+                    },
+                    "MinimumDepth": {
+                        "value": "L/24",
+                        "description": "Minimum depth for deflection control (L = span length)",
+                        "code_reference": "ACI 318-19"
+                    }
+                }
+            },
+            "IfcRoof": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Material", "ThermalTransmittance", "IsExternal", "FireRating", "LoadBearing", "PitchAngle", "ProjectedArea", "SurfaceArea"],
+                "quantities": ["GrossArea", "NetArea", "GrossVolume", "NetVolume", "Weight", "Perimeter"],
+                "relationships": ["ContainedInStructure", "HasCoverings", "HasAssociations", "HasOpenings"],
+                "requirements": {
+                    "MinimumSlope": {
+                        "value": "1/4:12",
+                        "description": "Minimum slope for drainage",
+                        "code_reference": "CBC Section 1507"
+                    },
+                    "FireRating": {
+                        "value": "Class A, B, or C",
+                        "description": "Required fire classification for roof assemblies",
+                        "code_reference": "CBC Section 1505"
+                    },
+                    "ThermalValue": {
+                        "value": "R-30ci",
+                        "description": "Minimum thermal resistance for insulation",
+                        "code_reference": "CBC Energy Code"
+                    }
+                }
+            },
+            "IfcSlab": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Material", "Thickness", "FireRating", "LoadBearing", "ThermalTransmittance", "AcousticRating", "SurfaceSpreadOfFlame"],
+                "quantities": ["GrossArea", "NetArea", "GrossVolume", "NetVolume", "GrossWeight", "NetWeight", "Perimeter"],
+                "relationships": ["ContainedInStructure", "HasCoverings", "HasAssociations", "HasOpenings"],
+                "requirements": {
+                    "MinimumThickness": {
+                        "value": "4 inches",
+                        "description": "Minimum thickness for structural concrete slabs",
+                        "code_reference": "ACI 318-19"
+                    },
+                    "Reinforcement": {
+                        "value": "As per design",
+                        "description": "Minimum reinforcement requirements",
+                        "code_reference": "ACI 318-19 Section 7.6"
+                    },
+                    "FireRating": {
+                        "value": "2 hours",
+                        "description": "Minimum fire rating for floor assemblies",
+                        "code_reference": "CBC Section 711"
+                    }
+                }
+            },
+            "IfcRailing": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Material", "HandicapAccessible", "IsExternal", "LoadBearing", "FireRating"],
+                "quantities": ["Length", "GrossVolume", "NetVolume", "GrossWeight", "NetWeight"],
+                "relationships": ["ContainedInStructure", "HasAssociations"],
+                "requirements": {
+                    "Height": {
+                        "value": "42 inches",
+                        "description": "Minimum height for guards",
+                        "code_reference": "CBC Section 1015.3"
+                    },
+                    "OpeningSize": {
+                        "value": "4 inches maximum",
+                        "description": "Maximum opening size in guards",
+                        "code_reference": "CBC Section 1015.4"
+                    },
+                    "LoadResistance": {
+                        "value": "50 pounds per linear foot",
+                        "description": "Minimum load resistance for handrails",
+                        "code_reference": "CBC Section 1607.8"
+                    }
+                }
+            },
+            "IfcDoor": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Height", "Width", "FireRating", "AccessibilityCompliant", "Operation", "Material", "IsExternal", "ThermalTransmittance", "SmokeControl"],
+                "quantities": ["Height", "Width", "Area", "Weight"],
+                "relationships": ["ContainedInStructure", "FillsOpening", "HasCoverings"],
+                "requirements": {
+                    "Width": {
+                        "value": "32 inches",
+                        "description": "Minimum clear width for accessibility",
+                        "code_reference": "CBC Chapter 11B-404.2.3"
+                    },
+                    "Height": {
+                        "value": "80 inches",
+                        "description": "Minimum door height",
+                        "code_reference": "CBC Section 1010.1.1"
+                    },
+                    "FireRating": {
+                        "value": "90 minutes",
+                        "description": "Required rating for exit enclosures",
+                        "code_reference": "CBC Section 716.1"
+                    },
+                    "Threshold": {
+                        "value": "0.5 inches",
+                        "description": "Maximum threshold height",
+                        "code_reference": "CBC Chapter 11B-404.2.5"
+                    },
+                    "ClosingSpeed": {
+                        "value": "5 seconds",
+                        "description": "Minimum time to close from 90 degrees",
+                        "code_reference": "CBC Chapter 11B-404.2.8"
+                    }
+                }
+            },
+            "IfcCovering": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Material", "Thickness", "FireRating", "AcousticRating", "SurfaceSpreadOfFlame", "ThermalTransmittance"],
+                "quantities": ["GrossArea", "NetArea", "GrossVolume", "NetVolume", "Weight"],
+                "relationships": ["CoversSpaces", "CoversElements", "HasAssociations"],
+                "requirements": {
+                    "FireRating": {
+                        "value": "As required",
+                        "description": "Fire rating based on assembly type",
+                        "code_reference": "CBC Section 703"
+                    },
+                    "FlameSpread": {
+                        "value": "Class A, B, or C",
+                        "description": "Surface burning characteristics",
+                        "code_reference": "CBC Section 803"
+                    },
+                    "AcousticRating": {
+                        "value": "NRC 0.70",
+                        "description": "Minimum noise reduction coefficient for acoustic ceilings",
+                        "code_reference": "ASTM C423"
+                    }
+                }
+            },
+            "IfcPipe": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["NominalDiameter", "Material", "WorkingPressure", "Temperature", "FlowDirection", "IsExternal", "HasInsulation"],
+                "quantities": ["Length", "CrossSectionArea", "OuterSurfaceArea", "GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "MinimumSlope": {
+                        "value": "1/4 inch per foot",
+                        "description": "Minimum slope for drainage pipes",
+                        "code_reference": "UPC Section 708.0"
+                    },
+                    "Material": {
+                        "value": "Approved materials",
+                        "description": "Approved materials for water distribution",
+                        "code_reference": "UPC Section 604.1"
+                    },
+                    "Insulation": {
+                        "value": "R-3",
+                        "description": "Minimum insulation for hot water pipes",
+                        "code_reference": "Energy Code"
+                    }
+                }
+            },
+            "IfcDuctSegment": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["CrossSectionShape", "Width", "Height", "Material", "AirFlow", "Velocity", "PressureDrop", "HasInsulation"],
+                "quantities": ["Length", "CrossSectionArea", "OuterSurfaceArea", "GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "Velocity": {
+                        "value": "2000 fpm maximum",
+                        "description": "Maximum air velocity in main ducts",
+                        "code_reference": "ASHRAE Fundamentals"
+                    },
+                    "Insulation": {
+                        "value": "R-6",
+                        "description": "Minimum insulation for supply ducts in unconditioned spaces",
+                        "code_reference": "Energy Code"
+                    },
+                    "Material": {
+                        "value": "Galvanized steel",
+                        "description": "Standard material requirement",
+                        "code_reference": "SMACNA Standards"
+                    }
+                }
+            },
+            "IfcLightFixture": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["PowerConsumption", "LightOutput", "ColorTemperature", "EmergencyBallast", "DimmingCapability", "LampType"],
+                "quantities": ["GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "EmergencyLighting": {
+                        "value": "90 minutes",
+                        "description": "Minimum emergency operation time",
+                        "code_reference": "CBC Section 1008.3"
+                    },
+                    "IlluminationLevel": {
+                        "value": "1 footcandle average",
+                        "description": "Minimum illumination for egress",
+                        "code_reference": "CBC Section 1008.2.1"
+                    },
+                    "EnergyEfficiency": {
+                        "value": "90 lumens/watt",
+                        "description": "Minimum luminous efficacy",
+                        "code_reference": "Energy Code"
+                    }
+                }
+            },
+            "IfcSanitaryTerminal": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["Material", "MountingHeight", "WaterConsumption", "AccessibilityCompliant", "HasSensor"],
+                "quantities": ["GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "WaterConsumption": {
+                        "value": "1.28 gpf",
+                        "description": "Maximum water consumption for toilets",
+                        "code_reference": "UPC Section 411.2"
+                    },
+                    "MountingHeight": {
+                        "value": "17-19 inches",
+                        "description": "Toilet seat height for accessibility",
+                        "code_reference": "CBC Chapter 11B-604.4"
+                    },
+                    "ClearFloorSpace": {
+                        "value": "60 x 56 inches",
+                        "description": "Minimum clear floor space at water closets",
+                        "code_reference": "CBC Chapter 11B-604.3"
+                    }
+                }
+            },
+            "IfcFireSuppressionTerminal": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["CoverageArea", "Temperature", "DischargePattern", "FlowRate", "PressureRating", "ResponseTime"],
+                "quantities": ["GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "Coverage": {
+                        "value": "225 sq ft maximum",
+                        "description": "Maximum coverage area per sprinkler",
+                        "code_reference": "NFPA 13"
+                    },
+                    "FlowRate": {
+                        "value": "0.1 gpm/sq ft",
+                        "description": "Minimum design density for light hazard",
+                        "code_reference": "NFPA 13"
+                    },
+                    "Spacing": {
+                        "value": "15 feet maximum",
+                        "description": "Maximum distance between sprinklers",
+                        "code_reference": "NFPA 13"
+                    }
+                }
+            },
+            "IfcSpace": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["GrossFloorArea", "NetFloorArea", "GrossVolume", "NetVolume", "NetCeilingHeight", "FinishFloorHeight", "OccupancyType", "OccupancyNumber"],
+                "quantities": ["Height", "FinishCeilingHeight", "GrossPerimeter", "NetPerimeter"],
+                "relationships": ["ContainedInStructure", "HasCoverings", "HasOpenings", "BoundsSpaces"],
+                "requirements": {
+                    "MinimumArea": {
+                        "value": "70 sq ft",
+                        "description": "Minimum floor area for habitable rooms",
+                        "code_reference": "CBC Section 1207.3"
+                    },
+                    "MinimumHeight": {
+                        "value": "7 feet 6 inches",
+                        "description": "Minimum ceiling height for habitable spaces",
+                        "code_reference": "CBC Section 1207.2"
+                    },
+                    "Ventilation": {
+                        "value": "0.35 air changes per hour",
+                        "description": "Minimum ventilation rate",
+                        "code_reference": "CBC Section 1202.1"
+                    }
+                }
+            },
+            "IfcZone": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["ZoneType", "OccupancyType", "SecurityLevel", "FireZone", "ThermalZone", "VentilationZone"],
+                "quantities": ["GrossFloorArea", "NetFloorArea", "GrossVolume"],
+                "relationships": ["ContainsSpaces", "HasAssociations"],
+                "requirements": {
+                    "FireCompartment": {
+                        "value": "As required",
+                        "description": "Fire compartment size limitations",
+                        "code_reference": "CBC Section 707"
+                    },
+                    "OccupantLoad": {
+                        "value": "Per Table 1004.5",
+                        "description": "Maximum floor area allowance per occupant",
+                        "code_reference": "CBC Section 1004"
+                    },
+                    "ExitAccess": {
+                        "value": "200 feet maximum",
+                        "description": "Maximum common path of egress travel",
+                        "code_reference": "CBC Section 1006.2.1"
+                    }
+                }
+            },
+            "IfcStairFlight": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["NumberOfRiser", "NumberOfTreads", "RiserHeight", "TreadLength", "WalkingLineOffset", "TreadLengthAtOffset", "NosingLength"],
+                "quantities": ["Length", "GrossVolume", "NetVolume", "GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasAssociations"],
+                "requirements": {
+                    "RiserHeight": {
+                        "value": "4-7 inches",
+                        "description": "Maximum riser height",
+                        "code_reference": "CBC Section 1011.5.2"
+                    },
+                    "TreadDepth": {
+                        "value": "11 inches minimum",
+                        "description": "Minimum tread depth",
+                        "code_reference": "CBC Section 1011.5.2"
+                    },
+                    "Uniformity": {
+                        "value": "3/8 inch maximum",
+                        "description": "Maximum variation in riser height or tread depth",
+                        "code_reference": "CBC Section 1011.5.4"
+                    }
+                }
+            },
+            "IfcCurtainWall": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["ThermalTransmittance", "IsExternal", "FireRating", "AcousticRating", "SecurityRating", "SolarHeatGainCoefficient"],
+                "quantities": ["Height", "Width", "GrossArea", "NetArea"],
+                "relationships": ["ContainedInStructure", "HasOpenings", "HasCoverings"],
+                "requirements": {
+                    "ThermalPerformance": {
+                        "value": "U-0.36",
+                        "description": "Maximum U-factor for fixed fenestration",
+                        "code_reference": "Energy Code Table 140.3-B"
+                    },
+                    "SHGC": {
+                        "value": "0.25",
+                        "description": "Maximum solar heat gain coefficient",
+                        "code_reference": "Energy Code Table 140.3-B"
+                    },
+                    "FireResistance": {
+                        "value": "As required",
+                        "description": "Fire-resistance rating based on separation distance",
+                        "code_reference": "CBC Section 705"
+                    }
+                }
+            },
+            "IfcElectricDistributionBoard": {
+                "attributes": ["Name", "Description", "ObjectType", "Tag", "GlobalId"],
+                "properties": ["MainVoltage", "NumberOfPhases", "NumberOfCircuits", "RatedCurrent", "IP_Rating", "HasSurgeProtection"],
+                "quantities": ["GrossWeight"],
+                "relationships": ["ContainedInStructure", "HasPorts", "HasAssociations"],
+                "requirements": {
+                    "WorkingSpace": {
+                        "value": "30 inches wide minimum",
+                        "description": "Minimum working space width",
+                        "code_reference": "NEC Article 110.26"
+                    },
+                    "Height": {
+                        "value": "6 feet 6 inches maximum",
+                        "description": "Maximum height to operating handle",
+                        "code_reference": "NEC Article 404.8"
+                    },
+                    "AFCI_Protection": {
+                        "value": "Required",
+                        "description": "Arc-fault circuit protection for specific circuits",
+                        "code_reference": "NEC Article 210.12"
+                    }
+                }
+            }
+        })
+
+        # Add new property units
+        self.property_units.update({
+            "GrossFloorArea": "sq ft",
+            "NetFloorArea": "sq ft",
+            "GrossVolume": "cu ft",
+            "NetVolume": "cu ft",
+            "NetCeilingHeight": "ft",
+            "FinishFloorHeight": "ft",
+            "OccupancyNumber": "persons",
+            "SecurityLevel": "enum",
+            "SHGC": "coefficient",
+            "MainVoltage": "V",
+            "RatedCurrent": "A",
+            "IP_Rating": "IP##"
+        })
         
     def set_location(self, location: str) -> bool:
         """Set the current location for building code requirements."""
@@ -241,7 +729,7 @@ class IFCAnalyzer:
             return False
     
     def search(self, query: str) -> List[Dict]:
-        """Search through both IFC schema and uploaded data based on natural language query."""
+        """Enhanced search through IFC schema and uploaded data."""
         try:
             results = []
             
@@ -256,41 +744,71 @@ class IFCAnalyzer:
                 stop_words = {'a', 'an', 'the', 'in', 'on', 'at', 'for', 'to', 'of', 'with', 'by'}
                 tokens = [w for w in tokens if w not in stop_words]
             
-            # Extract key terms
-            component_terms = sum([[k.lower(), k[3:].lower()] for k in self.ifc_schema.keys()], [])
-            property_terms = list(set(sum([schema["properties"] for schema in self.ifc_schema.values()], [])))
-            property_terms = [p.lower() for p in property_terms]
+            # Extract search categories
+            categories = {
+                'component': sum([[k.lower(), k[3:].lower()] for k in self.ifc_schema.keys()], []),
+                'property': sum([schema["properties"] for schema in self.ifc_schema.values()], []),
+                'quantity': sum([schema["quantities"] for schema in self.ifc_schema.values()], []),
+                'requirement': sum([list(schema.get("requirements", {}).keys()) for schema in self.ifc_schema.values()], []),
+                'attribute': sum([schema["attributes"] for schema in self.ifc_schema.values()], [])
+            }
+            
+            # Identify search focus
+            search_focus = {
+                category: [term for term in tokens if any(term in item.lower() for item in items)]
+                for category, items in categories.items()
+            }
             
             # Search in IFC schema
             for component_type, schema in self.ifc_schema.items():
-                component_name = component_type[3:].lower()  # Remove 'Ifc' prefix
-                if any(term in component_name for term in tokens):
+                should_include = False
+                component_name = component_type[3:].lower()
+                
+                # Check if component matches search
+                if (not any(search_focus.values()) or  # Include if no specific focus
+                    search_focus['component'] and any(term in component_name for term in search_focus['component']) or
+                    any(any(term in item.lower() for item in schema.get(cat, [])) 
+                        for cat, terms in search_focus.items() if terms and cat != 'component')):
+                    
                     result = {
                         "type": component_type,
-                        "name": f"Standard {component_name}",
-                        "properties": {},
-                        "requirements": schema.get("requirements", {}),
-                        "source": "Building Code"
+                        "name": f"Standard {component_type[3:]}",
+                        "source": "Building Code",
+                        "matched_on": [],
+                        "details": {}
                     }
                     
-                    # Add relevant properties based on query
-                    for prop in schema["properties"]:
-                        if prop.lower() in query or "dimension" in query:
-                            result["properties"][prop] = f"See requirements: {schema['requirements'].get(prop, 'No specific requirement')}"
-                    
+                    # Include relevant information based on search focus
+                    if schema.get("requirements"):
+                        result["details"]["Requirements"] = schema["requirements"]
+                        
+                    if schema.get("properties"):
+                        result["details"]["Properties"] = {
+                            prop: self.property_units.get(prop, "-")
+                            for prop in schema["properties"]
+                        }
+                        
+                    if schema.get("quantities"):
+                        result["details"]["Quantities"] = {
+                            qty: self.property_units.get(qty, "-")
+                            for qty in schema["quantities"]
+                        }
+                        
+                    if schema.get("relationships"):
+                        result["details"]["Relationships"] = schema["relationships"]
+                        
                     results.append(result)
             
-            # Search in uploaded JSON data
+            # Search in uploaded JSON data if available
             if self.user_data:
                 for key, value in self.user_data.items():
                     if isinstance(value, dict) and any(term in key.lower() for term in tokens):
-                        result = {
+                        results.append({
                             "type": "UserComponent",
                             "name": key,
-                            "properties": value,
-                            "source": "Uploaded Data"
-                        }
-                        results.append(result)
+                            "source": "Uploaded Data",
+                            "details": value
+                        })
             
             return results
         except Exception as e:
@@ -391,29 +909,54 @@ def main():
                             st.subheader("Building Code Requirements")
                             for result in code_results:
                                 with st.expander(f"{result['name']} Requirements"):
-                                    # Display requirements
-                                    if result.get('requirements'):
+                                    # Display requirements with code references
+                                    if result.get('details') and result['details'].get('Requirements'):
                                         st.write("**Code Requirements:**")
-                                        for req_name, req_value in result['requirements'].items():
-                                            st.write(f"- **{req_name}:** {req_value}")
+                                        for req_name, req_info in result['details']['Requirements'].items():
+                                            st.markdown(f"""
+                                            ##### {req_name}
+                                            - **Value:** {req_info['value']}
+                                            - **Description:** {req_info['description']}
+                                            - **Code Reference:** {req_info['code_reference']}
+                                            """)
                                     
-                                    # Display properties if any
-                                    if result.get('properties'):
+                                    # Display component information
+                                    schema = st.session_state.analyzer.ifc_schema.get(result['type'], {})
+                                    
+                                    # Show attributes
+                                    if schema.get('attributes'):
+                                        st.write("\n**Attributes:**")
+                                        st.write(", ".join(schema['attributes']))
+                                    
+                                    # Show properties with units
+                                    if schema.get('details') and schema['details'].get('Properties'):
                                         st.write("\n**Properties:**")
-                                        props_df = pd.DataFrame(
-                                            [(k, v) for k, v in result['properties'].items()],
-                                            columns=["Property", "Requirement"]
-                                        )
-                                        st.table(props_df)
+                                        props_with_units = []
+                                        for prop, unit in schema['details']['Properties'].items():
+                                            props_with_units.append(f"{prop} ({unit})")
+                                        st.write(", ".join(props_with_units))
+                                    
+                                    # Show quantities
+                                    if schema.get('details') and schema['details'].get('Quantities'):
+                                        st.write("\n**Quantities:**")
+                                        quantities_with_units = []
+                                        for qty, unit in schema['details']['Quantities'].items():
+                                            quantities_with_units.append(f"{qty} ({unit})")
+                                        st.write(", ".join(quantities_with_units))
+                                    
+                                    # Show relationships
+                                    if schema.get('details') and schema['details'].get('Relationships'):
+                                        st.write("\n**Relationships:**")
+                                        st.write(", ".join(schema['details']['Relationships']))
                         
                         # Display user-uploaded data
                         if user_results:
                             st.subheader("Additional Specifications (from uploaded data)")
                             for result in user_results:
                                 with st.expander(f"{result['name']} Specifications"):
-                                    if isinstance(result['properties'], dict):
+                                    if isinstance(result['details'], dict):
                                         props_df = pd.DataFrame(
-                                            [(k, v) for k, v in result['properties'].items()],
+                                            [(k, v) for k, v in result['details'].items()],
                                             columns=["Property", "Value"]
                                         )
                                         st.table(props_df)
