@@ -1,102 +1,79 @@
-# IFC Code Analyzer 🏗️
+# Building Code Analyzer
 
-A Streamlit web application for analyzing building components from IFC files and building codes. The application provides a comprehensive interface to search and view building code requirements, component specifications, and relationships based on IFC schema.
+A simple tool to analyze building components against code requirements and provide compliance reports.
 
 ## Features
 
-- **Component Search**: Natural language search for building components and their requirements
-- **Building Code Integration**: Access building code requirements for various components
-- **Multiple Locations**: Support for different jurisdictions (California, New York, Texas, International)
-- **IFC Schema Support**: Comprehensive IFC schema implementation including:
-  - Architectural Elements (Walls, Windows, Doors, etc.)
-  - MEP Components (Pipes, Ducts, Light Fixtures, etc.)
-  - Spatial Elements (Spaces, Zones)
-  - Structural Elements (Beams, Columns, Slabs)
-- **Code Requirement Display**: Detailed view of building code requirements with references
-- **Unit Management**: Automatic unit conversion between metric and imperial systems
-- **File Upload**: Support for IFC and JSON file uploads with custom specifications
+1. **Component Analysis**
+   - Walls (structural and partition)
+   - Doors (exterior and interior)
+   - Windows (egress and non-egress)
+   - Stairs (public and private)
 
-## Installation
+2. **Code Compliance**
+   - Dimensional requirements
+   - Material specifications
+   - Fire ratings
+   - Accessibility requirements
 
-1. Clone the repository:
-```bash
-git clone https://github.com/yourusername/building_code_analyzer.git
-cd building_code_analyzer
-```
-
-2. Create a virtual environment (optional but recommended):
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+3. **Multiple Jurisdictions**
+   - California Building Code
+   - NYC Building Code
+   - Texas Building Code (IBC with amendments)
 
 ## Usage
 
-1. Start the Streamlit application:
-```bash
-streamlit run ifc_analyzer.py
+1. **Install Requirements**
+   ```bash
+   pip install streamlit pandas
+   ```
+
+2. **Run the Application**
+   ```bash
+   streamlit run building_analyzer.py
+   ```
+
+3. **Upload Building Data**
+   - Prepare a JSON file with your building components
+   - Use the example format shown in `example_building.json`
+   - Upload through the web interface
+
+4. **View Results**
+   - Compliance Summary
+   - Component Details
+   - Code References
+
+## JSON Format
+
+Your building data should follow this structure:
+```json
+{
+    "walls": [
+        {
+            "id": "W1",
+            "type": "structural",
+            "thickness": 8,
+            "fire_rating": "2 hours"
+        }
+    ],
+    "doors": [
+        {
+            "id": "D1",
+            "type": "exterior",
+            "width": 36,
+            "height": 80
+        }
+    ]
+}
 ```
 
-2. Open your web browser and navigate to the provided URL (typically http://localhost:8501)
+## Requirements
 
-3. Use the application:
-   - Select your location from the sidebar
-   - Enter search queries in the search box
-   - Upload IFC or JSON files for custom specifications
-   - View component requirements and specifications
+- Python 3.7+
+- Streamlit
+- Pandas
 
-## Search Examples
+## Example Files
 
-- "Show me wall requirements"
-- "What are the door dimensions"
-- "Show me fire rating requirements for columns"
-- "What are the ventilation requirements for spaces"
-- "Show me sprinkler spacing requirements"
-
-## Component Types
-
-The application supports various IFC components including:
-
-### Architectural
-- IfcWall
-- IfcWindow
-- IfcDoor
-- IfcStair
-- IfcRoof
-- IfcSlab
-- IfcRailing
-- IfcCurtainWall
-
-### MEP
-- IfcPipe
-- IfcDuctSegment
-- IfcLightFixture
-- IfcSanitaryTerminal
-- IfcFireSuppressionTerminal
-- IfcElectricDistributionBoard
-
-### Spatial
-- IfcSpace
-- IfcZone
-
-### Structural
-- IfcBeam
-- IfcColumn
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- buildingSMART for IFC specifications
-- Various building code authorities for requirements and specifications 
+1. `building_analyzer.py` - Main application
+2. `example_building.json` - Example building data 

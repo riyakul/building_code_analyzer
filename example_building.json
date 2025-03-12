@@ -1,0 +1,60 @@
+{
+    "walls": [
+        {
+            "id": "W1",
+            "type": "structural",
+            "thickness": 8,
+            "fire_rating": "2 hours",
+            "reinforcement": "As per structural calculations"
+        },
+        {
+            "id": "W2",
+            "type": "partition",
+            "thickness": 3.5,
+            "sound_rating": "STC 45",
+            "fire_rating": "1 hour"
+        }
+    ],
+    "doors": [
+        {
+            "id": "D1",
+            "type": "exterior",
+            "width": 36,
+            "height": 82,
+            "fire_rating": "90 minutes"
+        },
+        {
+            "id": "D2",
+            "type": "interior",
+            "width": 30,
+            "height": 80,
+            "accessibility": "Standard handle"
+        }
+    ],
+    "windows": [
+        {
+            "id": "W1",
+            "type": "egress",
+            "width": 24,
+            "height": 48,
+            "min_area": 8,
+            "sill_height": 42
+        },
+        {
+            "id": "W2",
+            "type": "non_egress",
+            "glazing": "Tempered glass",
+            "energy": "U-factor = 0.32, SHGC = 0.25"
+        }
+    ],
+    "stairs": [
+        {
+            "id": "S1",
+            "type": "public",
+            "width": 48,
+            "riser_height": 6.5,
+            "tread_depth": 11.5,
+            "headroom": 84
+        }
+    ]
+} 

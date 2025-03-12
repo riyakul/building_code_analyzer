@@ -3,10 +3,11 @@ import json
 import re
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Set
 import ifcopenshell
 import plotly.graph_objects as go
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 from nltk.tokenize import word_tokenize
 from nltk.stem import WordNetLemmatizer
@@ -41,17 +42,67 @@ class IFCAnalyzer:
     def __init__(self):
         self.lemmatizer = WordNetLemmatizer()
         self.stop_words = set(stopwords.words('english'))
-        self.component_types = set([
-            "wall", "door", "window", "slab", "beam", "column", "stair",
-            "roof", "space", "zone", "pipe", "duct", "fixture"
-        ])
-        self.attribute_keywords = {
-            "dimension": ["height", "width", "length", "thickness", "diameter", "radius"],
-            "location": ["position", "placement", "coordinate", "location", "elevation"],
-            "material": ["material", "composition", "made of", "constructed from"],
-            "performance": ["rating", "class", "grade", "performance"],
-            "relationship": ["connected", "adjacent", "attached", "contains", "supports"]
+        self.nlp = spacy.load('en_core_web_sm')
+        
+        # Enhanced component types with variations
+        self.component_types = {
+            "wall": ["wall", "partition", "barrier"],
+            "door": ["door", "entrance", "exit", "gateway"],
+            "window": ["window", "opening", "glazing"],
+            "slab": ["slab", "floor", "ceiling", "deck"],
+            "beam": ["beam", "girder", "joist"],
+            "column": ["column", "pillar", "post"],
+            "stair": ["stair", "stairway", "staircase", "steps"],
+            "roof": ["roof", "roofing", "covering"],
+            "space": ["space", "room", "area", "zone"],
+            "pipe": ["pipe", "conduit", "duct"],
+            "fixture": ["fixture", "fitting", "equipment"]
         }
+        
+        # Enhanced attribute keywords with context
+        self.attribute_keywords = {
+            "dimension": {
+                "terms": ["height", "width", "length", "thickness", "diameter", "radius"],
+                "units": ["mm", "cm", "m", "inch", "ft"],
+                "comparators": ["greater than", "less than", "equal to", "at least", "at most"]
+            },
+            "location": {
+                "terms": ["position", "placement", "coordinate", "location", "elevation"],
+                "spatial": ["above", "below", "next to", "between", "adjacent"],
+                "reference": ["ground", "floor", "ceiling", "wall"]
+            },
+            "material": {
+                "terms": ["material", "composition", "made of", "constructed from"],
+                "types": ["concrete", "steel", "wood", "glass", "aluminum"]
+            },
+            "performance": {
+                "terms": ["rating", "class", "grade", "performance"],
+                "metrics": ["fire", "acoustic", "thermal", "structural"]
+            },
+            "relationship": {
+                "terms": ["connected", "adjacent", "attached", "contains", "supports"],
+                "types": ["structural", "spatial", "logical", "physical"]
+            }
+        }
+        
+        # Relationship mapping for component connections
+        self.relationship_mapping = {
+            "supports": {"inverse": "supported by", "structural": True},
+            "contains": {"inverse": "contained in", "spatial": True},
+            "connects": {"inverse": "connected to", "bidirectional": True},
+            "adjacent": {"inverse": "adjacent to", "bidirectional": True},
+            "hosts": {"inverse": "hosted by", "physical": True}
+        }
+        
+        # Spatial operators for location-based queries
+        self.spatial_operators = {
+            "above": {"axis": "z", "comparison": ">"},
+            "below": {"axis": "z", "comparison": "<"},
+            "next_to": {"axis": ["x", "y"], "distance": "near"},
+            "between": {"type": "range", "axes": ["x", "y", "z"]},
+            "inside": {"type": "containment", "check": "boundaries"}
+        }
+        
         self.locations = {
             "California": {
                 "code_version": "2022 California Building Code",
@@ -747,154 +798,274 @@ class IFCAnalyzer:
     
     def preprocess_query(self, query: str) -> Tuple[List[str], Dict[str, Any]]:
         """
-        Enhanced query preprocessing with entity recognition and attribute extraction
+        Enhanced query preprocessing with advanced NLP and pattern recognition
         """
-        # Tokenize and lemmatize
-        tokens = word_tokenize(query.lower())
-        lemmatized = [self.lemmatizer.lemmatize(token) for token in tokens if token not in self.stop_words]
+        # Process with spaCy for advanced NLP
+        doc = self.nlp(query.lower())
         
-        # Extract named entities and patterns
-        tagged = pos_tag(tokens)
-        entities = ne_chunk(tagged)
-        
-        # Identify components and attributes
+        # Extract components and their variations
         components = []
-        attributes = {}
+        for token in doc:
+            for comp_type, variations in self.component_types.items():
+                if token.text in variations or token.lemma_ in variations:
+                    components.append(comp_type)
         
-        for token in lemmatized:
-            if token in self.component_types:
-                components.append(token)
+        # Extract numerical values with units and comparators
+        numerical_patterns = []
+        for token in doc:
+            if token.like_num:
+                next_token = token.nbor() if token.i + 1 < len(doc) else None
+                if next_token and next_token.text in sum([kw["units"] for kw in self.attribute_keywords.values()], []):
+                    numerical_patterns.append({
+                        "value": float(token.text),
+                        "unit": next_token.text,
+                        "comparator": self._find_comparator(doc, token.i)
+                    })
         
-        # Extract numerical values with units
-        numerical_pattern = r'(\d+(?:\.\d+)?)\s*(feet|ft|meters|m|inches|in|mm|cm)'
-        numerical_values = re.findall(numerical_pattern, query)
+        # Extract spatial relationships
+        spatial_relations = []
+        for token in doc:
+            if token.text in self.spatial_operators:
+                relation = {
+                    "type": token.text,
+                    "components": self._find_related_components(doc, token.i)
+                }
+                spatial_relations.append(relation)
         
-        # Identify requested attributes
-        for category, keywords in self.attribute_keywords.items():
-            if any(keyword in query.lower() for keyword in keywords):
-                attributes[category] = True
+        # Extract material and performance requirements
+        requirements = {
+            "material": [],
+            "performance": [],
+            "relationship": []
+        }
+        
+        for token in doc:
+            # Check material requirements
+            for material in self.attribute_keywords["material"]["types"]:
+                if token.text == material or token.lemma_ == material:
+                    requirements["material"].append(material)
+            
+            # Check performance requirements
+            for metric in self.attribute_keywords["performance"]["metrics"]:
+                if token.text == metric or token.lemma_ == metric:
+                    requirements["performance"].append(metric)
+            
+            # Check relationships
+            for rel_type in self.relationship_mapping:
+                if token.text == rel_type or token.lemma_ == rel_type:
+                    requirements["relationship"].append(rel_type)
         
         return components, {
-            "attributes": attributes,
-            "numerical_values": numerical_values,
-            "entities": entities
+            "numerical_patterns": numerical_patterns,
+            "spatial_relations": spatial_relations,
+            "requirements": requirements,
+            "entities": [ent.text for ent in doc.ents]
         }
-
-    def format_component_data(self, component: Dict[str, Any], include_details: bool = True) -> str:
-        """
-        Enhanced component data formatting with detailed information
-        """
-        details = []
-        
-        # Basic information
-        if "Name" in component:
-            details.append(f"**Name:** {component['Name']}")
-        if "Description" in component:
-            details.append(f"**Description:** {component['Description']}")
-        
-        # Numerical values and dimensions
-        if "dimensions" in component:
-            details.append("\n**Dimensions:**")
-            for dim, value in component["dimensions"].items():
-                details.append(f"- {dim}: {value}")
-        
-        # Location and placement
-        if "placement" in component:
-            details.append("\n**Spatial Placement:**")
-            placement = component["placement"]
-            details.append(f"- Location: ({placement.get('x', 0)}, {placement.get('y', 0)}, {placement.get('z', 0)})")
-            if "rotation" in placement:
-                details.append(f"- Rotation: {placement['rotation']} degrees")
-        
-        # Material properties
-        if "material" in component:
-            details.append("\n**Material Properties:**")
-            for prop, value in component["material"].items():
-                details.append(f"- {prop}: {value}")
-        
-        # Performance ratings
-        if "ratings" in component:
-            details.append("\n**Performance Ratings:**")
-            for rating, value in component["ratings"].items():
-                details.append(f"- {rating}: {value}")
-        
-        # Relationships
-        if "relationships" in component:
-            details.append("\n**Component Relationships:**")
-            for rel in component["relationships"]:
-                details.append(f"- {rel}")
-        
-        # Code requirements and compliance
-        if "requirements" in component:
-            details.append("\n**Building Code Requirements:**")
-            for req, data in component["requirements"].items():
-                details.append(f"- {req}:")
-                details.append(f"  - Required: {data['value']}")
-                details.append(f"  - Reference: {data['code_reference']}")
-                if "compliance" in data:
-                    details.append(f"  - Compliance: {data['compliance']}")
-        
-        return "\n".join(details)
-
+    
+    def _find_comparator(self, doc, num_index: int) -> str:
+        """Find comparison operators before a number"""
+        comparators = sum([kw["comparators"] for kw in self.attribute_keywords.values() if "comparators" in kw], [])
+        for i in range(max(0, num_index - 3), num_index):
+            if doc[i].text in comparators:
+                return doc[i].text
+        return "equal to"
+    
+    def _find_related_components(self, doc, rel_index: int) -> List[Dict[str, str]]:
+        """Find components related by a spatial operator"""
+        related = []
+        for i, token in enumerate(doc):
+            if i != rel_index:
+                for comp_type, variations in self.component_types.items():
+                    if token.text in variations or token.lemma_ in variations:
+                        related.append({
+                            "type": comp_type,
+                            "position": "before" if i < rel_index else "after"
+                        })
+        return related
+    
     def search_components(self, query: str) -> List[Dict[str, Any]]:
         """
-        Enhanced component search with detailed attribute matching
+        Enhanced component search with advanced filtering and relationship analysis
         """
         components, query_info = self.preprocess_query(query)
         results = []
         
-        # Search through IFC schema and match components
-        for component_type, data in self.ifc_schema.items():
-            component_name = component_type.replace("Ifc", "").lower()
-            if not components or component_name in components:
-                # Create detailed component information
-                component_info = {
-                    "type": component_type,
-                    "attributes": data.get("attributes", {}),
-                    "properties": data.get("properties", {}),
-                    "quantities": data.get("quantities", {}),
-                    "relationships": data.get("relationships", []),
-                    "requirements": data.get("requirements", {})
-                }
-                
-                # Add placement information
-                component_info["placement"] = {
-                    "x": 0.0,  # Replace with actual values from IFC file
-                    "y": 0.0,
-                    "z": 0.0,
-                    "rotation": 0.0
-                }
-                
-                # Match requested attributes
-                if query_info["attributes"]:
-                    for category in query_info["attributes"]:
-                        if category in data:
-                            component_info[category] = data[category]
-                
-                results.append(component_info)
+        # Search through extracted data
+        for entity_type, entities in self.extracted_data.items():
+            # Check if entity type matches requested components
+            if not components or any(comp in entity_type.lower() for comp in components):
+                for entity in entities:
+                    # Initialize match score
+                    match_score = 0
+                    match_details = {}
+                    
+                    # Check numerical patterns
+                    for pattern in query_info["numerical_patterns"]:
+                        for prop_name, value in entity["Properties"].items():
+                            if any(term in prop_name.lower() for term in self.attribute_keywords["dimension"]["terms"]):
+                                match = self._check_numerical_match(value, pattern)
+                                if match["matches"]:
+                                    match_score += 1
+                                    match_details[prop_name] = match
+                    
+                    # Check spatial relations
+                    for relation in query_info["spatial_relations"]:
+                        spatial_match = self._check_spatial_relation(entity, relation)
+                        if spatial_match["matches"]:
+                            match_score += 1
+                            match_details["spatial"] = spatial_match
+                    
+                    # Check requirements
+                    for req_type, req_values in query_info["requirements"].items():
+                        if req_values:
+                            req_match = self._check_requirements(entity, req_type, req_values)
+                            if req_match["matches"]:
+                                match_score += 1
+                                match_details[req_type] = req_match
+                    
+                    # If component matches criteria, add to results
+                    if match_score > 0 or not query_info["numerical_patterns"]:
+                        result = {
+                            "type": entity_type,
+                            "id": entity["GlobalId"],
+                            "name": entity["Name"],
+                            "properties": entity["Properties"],
+                            "quantities": entity["Quantities"],
+                            "relationships": entity["Relationships"],
+                            "match_score": match_score,
+                            "match_details": match_details
+                        }
+                        results.append(result)
         
+        # Sort results by match score
+        results.sort(key=lambda x: x["match_score"], reverse=True)
         return results
-
+    
+    def _check_numerical_match(self, value: float, pattern: Dict[str, Any]) -> Dict[str, Any]:
+        """Check if a value matches a numerical pattern"""
+        if pattern["comparator"] == "greater than":
+            matches = value > pattern["value"]
+        elif pattern["comparator"] == "less than":
+            matches = value < pattern["value"]
+        elif pattern["comparator"] == "at least":
+            matches = value >= pattern["value"]
+        elif pattern["comparator"] == "at most":
+            matches = value <= pattern["value"]
+        else:  # equal to
+            matches = abs(value - pattern["value"]) < 0.001
+        
+        return {
+            "matches": matches,
+            "value": value,
+            "pattern": pattern
+        }
+    
+    def _check_spatial_relation(self, entity: Dict[str, Any], relation: Dict[str, Any]) -> Dict[str, Any]:
+        """Check if an entity satisfies a spatial relation"""
+        matches = False
+        details = {}
+        
+        if "placement" in entity["Properties"]:
+            placement = entity["Properties"]["placement"]
+            operator = self.spatial_operators[relation["type"]]
+            
+            if operator["type"] == "containment":
+                # Check if entity is contained within boundaries
+                matches = self._check_containment(placement, relation["components"])
+                details["containment"] = "within bounds" if matches else "outside bounds"
+            
+            elif operator["type"] == "range":
+                # Check if entity is between specified components
+                matches = self._check_range(placement, relation["components"])
+                details["range"] = "within range" if matches else "outside range"
+            
+            else:
+                # Check directional relationships
+                matches = self._check_direction(placement, relation["components"], operator)
+                details["direction"] = relation["type"]
+        
+        return {
+            "matches": matches,
+            "relation": relation["type"],
+            "details": details
+        }
+    
+    def _check_requirements(self, entity: Dict[str, Any], req_type: str, values: List[str]) -> Dict[str, Any]:
+        """Check if an entity meets specified requirements"""
+        matches = False
+        details = {}
+        
+        if req_type == "material":
+            if "Material" in entity["Properties"]:
+                material = entity["Properties"]["Material"].lower()
+                matches = any(val in material for val in values)
+                details["material"] = material
+        
+        elif req_type == "performance":
+            for value in values:
+                for prop_name, prop_value in entity["Properties"].items():
+                    if value in prop_name.lower():
+                        matches = True
+                        details[value] = prop_value
+        
+        elif req_type == "relationship":
+            for rel in entity["Relationships"]:
+                if any(val in rel["type"].lower() for val in values):
+                    matches = True
+                    details[rel["type"]] = rel["related_name"]
+        
+        return {
+            "matches": matches,
+            "type": req_type,
+            "details": details
+        }
+    
     def display_search_results(self, results: List[Dict[str, Any]]):
         """
-        Enhanced search results display with detailed information
+        Enhanced search results display with detailed matching information
         """
         if not results:
             st.warning("No components found matching your search criteria.")
             return
         
-        for i, result in enumerate(results):
-            with st.expander(f"{result['type']} Details", expanded=True):
-                # Display formatted component data
-                st.markdown(self.format_component_data(result))
+        for result in results:
+            with st.expander(f"{result['type']}: {result['name']} (Match Score: {result['match_score']})", expanded=True):
+                # Basic Information
+                st.markdown("### Basic Information")
+                st.write(f"- ID: {result['id']}")
+                st.write(f"- Type: {result['type']}")
                 
-                # Add visual representation if available
-                if "geometry" in result:
-                    st.plotly_chart(self.create_3d_visualization(result))
+                # Properties
+                if result['properties']:
+                    st.markdown("### Properties")
+                    props_df = pd.DataFrame(
+                        [(k, v, self.property_units.get(k, "-")) 
+                         for k, v in result['properties'].items()],
+                        columns=["Property", "Value", "Unit"]
+                    )
+                    st.table(props_df)
                 
-                # Show compliance status
-                if "requirements" in result:
-                    self.display_compliance_status(result["requirements"])
+                # Match Details
+                if result['match_details']:
+                    st.markdown("### Match Details")
+                    for category, details in result['match_details'].items():
+                        st.write(f"**{category}:**")
+                        if isinstance(details, dict):
+                            for key, value in details.items():
+                                st.write(f"- {key}: {value}")
+                        else:
+                            st.write(f"- {details}")
+                
+                # Relationships
+                if result['relationships']:
+                    st.markdown("### Relationships")
+                    for rel in result['relationships']:
+                        st.write(f"- {rel['type']} → {rel['related_name']}")
+                
+                # Code Compliance
+                if 'requirements' in result:
+                    st.markdown("### Code Compliance")
+                    self.display_compliance_status(result['requirements'])
 
     def display_compliance_status(self, requirements: Dict[str, Any]):
         """
@@ -922,22 +1093,25 @@ class IFCAnalyzer:
 
 def main():
     st.set_page_config(
-        page_title="IFC Code Analyzer",
+        page_title="Construction Code Reference",
         page_icon="🏗️",
         layout="wide"
     )
     
-    st.title("IFC Code Analyzer 🏗️")
+    st.title("Construction Code Reference & Requirements 🏗️")
     
     # Initialize session state
     if 'analyzer' not in st.session_state:
         st.session_state.analyzer = IFCAnalyzer()
     
-    # Sidebar for location selection and file upload
-    with st.sidebar:
-        st.header("Settings")
+    # Create three main columns
+    col1, col2 = st.columns([1, 2])
+    
+    # Left sidebar for navigation and filters
+    with col1:
+        st.header("Component Selection")
         
-        # Location selection
+        # Location selection with immediate requirements update
         location = st.selectbox(
             "Select Location",
             options=list(st.session_state.analyzer.locations.keys()),
@@ -945,76 +1119,166 @@ def main():
         )
         st.session_state.analyzer.current_location = location
         
-        # File upload section
-        st.header("File Upload")
-        uploaded_file = st.file_uploader("Upload IFC or JSON file", type=['ifc', 'json'])
+        # Component category selection
+        component_category = st.selectbox(
+            "Select Component Category",
+            options=[
+                "Structural Components",
+                "Architectural Elements",
+                "MEP Systems",
+                "Fire Safety",
+                "Accessibility Features"
+            ]
+        )
         
-        if uploaded_file:
-            try:
-                if uploaded_file.type == "application/json":
-                    st.session_state.analyzer.load_json_data(uploaded_file)
-                else:
-                    st.session_state.analyzer.load_ifc_file(uploaded_file)
-                st.success("File loaded successfully!")
-            except Exception as e:
-                st.error(f"Error loading file: {str(e)}")
+        # Specific component selection based on category
+        component_options = {
+            "Structural Components": ["Beam", "Column", "Slab", "Wall (Structural)", "Foundation"],
+            "Architectural Elements": ["Wall (Partition)", "Door", "Window", "Stairs", "Railing"],
+            "MEP Systems": ["HVAC", "Plumbing", "Electrical", "Fire Protection"],
+            "Fire Safety": ["Fire Walls", "Fire Doors", "Sprinkler Systems", "Emergency Lighting"],
+            "Accessibility Features": ["Ramps", "Accessible Routes", "Restrooms", "Signage"]
+        }
+        
+        specific_component = st.selectbox(
+            "Select Specific Component",
+            options=component_options.get(component_category, [])
+        )
+        
+        # Additional filters
+        st.subheader("Additional Filters")
+        occupancy_type = st.multiselect(
+            "Occupancy Type",
+            ["Residential", "Commercial", "Industrial", "Educational", "Healthcare"]
+        )
+        
+        construction_type = st.selectbox(
+            "Construction Type",
+            ["Type I-A", "Type I-B", "Type II-A", "Type II-B", "Type III-A", "Type III-B", "Type IV", "Type V-A", "Type V-B"]
+        )
     
     # Main content area
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        st.header("Component Search")
-        search_query = st.text_input(
-            "Search for components and requirements",
-            placeholder="Example: 'Show me wall requirements with height greater than 10 feet'"
-        )
-        
-        # Search help
-        with st.expander("Search Help"):
-            st.markdown("""
-            **Search Tips:**
-            - Search for specific components: "wall", "door", "window", etc.
-            - Include dimensions: "walls higher than 10 feet"
-            - Ask about locations: "position of beams"
-            - Query materials: "concrete walls"
-            - Check requirements: "fire rating requirements for doors"
-            - Find relationships: "walls connected to columns"
-            """)
-        
-        if search_query:
-            with st.spinner('Searching...'):
-                results = st.session_state.analyzer.search_components(search_query)
-                st.session_state.analyzer.display_search_results(results)
-    
     with col2:
-        st.header("Building Code Reference")
-        code_info = st.session_state.analyzer.locations[location]
-        st.info(f"""
-        **Current Building Code:**
-        - Version: {code_info['code_version']}
-        - Jurisdiction: {code_info['jurisdiction']}
-        - Units: {code_info['units'].capitalize()}
-        """)
-        
-        # Component quick reference
-        st.subheader("Component Quick Reference")
-        component_type = st.selectbox(
-            "Select Component Type",
-            options=[k for k in st.session_state.analyzer.ifc_schema.keys()]
-        )
-        
-        if component_type:
-            component_data = st.session_state.analyzer.ifc_schema[component_type]
-            st.markdown(f"### {component_type} Requirements")
+        if specific_component:
+            st.header(f"{specific_component} Requirements")
             
-            if "requirements" in component_data:
-                for req_name, req_data in component_data["requirements"].items():
-                    st.markdown(f"""
-                    **{req_name}**
-                    - Value: {req_data['value']}
-                    - {req_data['description']}
-                    - Reference: {req_data['code_reference']}
-                    """)
+            # Create tabs for different types of information
+            tabs = st.tabs([
+                "Dimensional Requirements",
+                "Material Specifications",
+                "Construction Details",
+                "Code Requirements",
+                "Installation Guide"
+            ])
+            
+            # Dimensional Requirements Tab
+            with tabs[0]:
+                st.subheader("Dimensional Requirements")
+                if specific_component in st.session_state.analyzer.ifc_schema:
+                    component_data = st.session_state.analyzer.ifc_schema[specific_component]
+                    if "requirements" in component_data:
+                        for name, req in component_data["requirements"].items():
+                            if any(dim in name.lower() for dim in ["height", "width", "depth", "thickness", "length"]):
+                                st.info(f"""
+                                **{name}**
+                                - Required Value: {req['value']}
+                                - Description: {req['description']}
+                                - Code Reference: {req['code_reference']}
+                                """)
+            
+            # Material Specifications Tab
+            with tabs[1]:
+                st.subheader("Material Specifications")
+                st.markdown("""
+                #### Approved Materials
+                | Material Type | Minimum Grade | Standards Reference |
+                |--------------|---------------|-------------------|
+                | Concrete | 3000 PSI | ACI 318-19 |
+                | Steel | Grade 50 | ASTM A992 |
+                | Wood | No. 2 or Better | ANSI/AWC NDS-2018 |
+                """)
+                
+                st.markdown("#### Material Properties")
+                material_df = pd.DataFrame({
+                    "Property": ["Compressive Strength", "Tensile Strength", "Fire Rating"],
+                    "Requirement": ["As specified", "Per design", "2 hours minimum"],
+                    "Test Method": ["ASTM C39", "ASTM A370", "UL 263"]
+                })
+                st.table(material_df)
+            
+            # Construction Details Tab
+            with tabs[2]:
+                st.subheader("Construction Details")
+                st.markdown("#### Critical Dimensions")
+                st.image("https://via.placeholder.com/400x300.png?text=Construction+Detail+Drawing")
+                
+                st.markdown("#### Connection Details")
+                st.markdown("""
+                1. **Primary Connections**
+                   - Type: Bolted/Welded
+                   - Specification: A325 bolts, E70XX electrodes
+                   - Minimum Requirements: 2 bolts per connection
+                
+                2. **Secondary Connections**
+                   - Type: As specified
+                   - Minimum Edge Distance: 1.5 × bolt diameter
+                   - Minimum Spacing: 3 × bolt diameter
+                """)
+            
+            # Code Requirements Tab
+            with tabs[3]:
+                st.subheader("Code Requirements")
+                code_info = st.session_state.analyzer.get_location_info()
+                st.info(f"""
+                **Applicable Code: {code_info['code_version']}**
+                **Jurisdiction: {code_info['jurisdiction']}**
+                """)
+                
+                if specific_component in st.session_state.analyzer.ifc_schema:
+                    component_data = st.session_state.analyzer.ifc_schema[specific_component]
+                    if "requirements" in component_data:
+                        for name, req in component_data["requirements"].items():
+                            st.success(f"""
+                            #### {name}
+                            - **Requirement:** {req['value']}
+                            - **Description:** {req['description']}
+                            - **Code Reference:** {req['code_reference']}
+                            """)
+            
+            # Installation Guide Tab
+            with tabs[4]:
+                st.subheader("Installation Guide")
+                st.markdown("""
+                #### Pre-Installation Checklist
+                1. [ ] Verify all materials meet specifications
+                2. [ ] Check dimensional requirements
+                3. [ ] Confirm connection details
+                4. [ ] Review safety requirements
+                
+                #### Installation Steps
+                1. **Preparation**
+                   - Clean work area
+                   - Verify tools and equipment
+                   - Check safety equipment
+                
+                2. **Installation Sequence**
+                   - Step-by-step guide
+                   - Critical checkpoints
+                   - Quality control measures
+                
+                3. **Post-Installation**
+                   - Inspection requirements
+                   - Documentation needed
+                   - Testing procedures
+                """)
+                
+                st.warning("""
+                ⚠️ **Important Notes:**
+                - Follow manufacturer's installation instructions
+                - Comply with local building codes
+                - Maintain proper documentation
+                - Schedule required inspections
+                """)
 
 if __name__ == "__main__":
     main() 
